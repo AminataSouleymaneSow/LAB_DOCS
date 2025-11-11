@@ -8,4 +8,6 @@ output/
 .Ruserdata
 .DS_Store
 
-
+# Fichiers générés par RMarkdown
+*.html
+*.nb.html
