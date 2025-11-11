@@ -1,0 +1,11 @@
+# Ignorer les dossiers de données et résultats
+data/
+output/
+# Ignorer les fichiers RStudio temporaires
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+
+

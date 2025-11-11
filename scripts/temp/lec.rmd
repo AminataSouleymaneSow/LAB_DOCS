@@ -1,0 +1,758 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+
+####### ANALYSIS OF LEC SUBCLUSTERS:DONORS, AVERAGE EXPRESSION AND CORRELATION ################mnbc  
+
+#SAME PROCESS LIKE THE DATA_3
+
+##for the path
+```{r,setup, include=FALSE}
+
+library(knitr)
+library(rprojroot)
+
+# Set project root for all chunks during knitting
+project_root <- rprojroot::find_root(rprojroot::has_file("LAB_DOCS.Rproj"))
+knitr::opts_knit$set(root.dir = project_root)
+
+# Check (for debugging)
+cat("Root directory for knitting:", knitr::opts_knit$get("root.dir"), "\n")
+
+#same result 
+set.seed(123)
+```
+
+
+
+```{r}
+#packages
+library(pacman)
+p_load(Seurat,SeuratData,Matrix,dplyr,DropletUtils,presto,gprofiler2,ggplot2,patchwork,gplots,cowplot,gprofiler2,openxlsx, plyr,scDblFinder,BiocParallel,RColorBrewer)
+```
+
+#1-load the data
+```{r}
+####LOAD THE DATA
+
+lec_obj = readRDS("data/process/temp/lec_subset.rds")
+table(lec_obj$celltype)
+```
+
+
+#2-perform N,S,FVF AND RPCA
+
+```{r}
+###normalize, scale, runpca,find varfeature####
+
+lec_obj = NormalizeData(lec_obj)
+lec_obj = FindVariableFeatures(lec_obj)
+lec_obj = ScaleData(lec_obj, vars.to.regress = c("nCount_RNA", "percent.mt"))
+lec_obj = RunPCA(lec_obj)
+
+```
+
+#3-PERFORM INTEGRATION
+
+```{r}
+##perform integration: no need to join layers###
+library(harmony)
+lec_obj =RunHarmony(
+  lec_obj, 
+  group.by.vars = "orig.ident",
+  orig.reduction = "pca", 
+  dims.use = 1:30
+)
+Reductions(lec_obj) # to check harmony: run succesfully
+
+#visualization
+lec_obj = RunUMAP(lec_obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+p1=DimPlot(
+  lec_obj,
+  reduction = "umap.harmony",
+  group.by = c("sample"),
+ label.size = 2, shuffle = T
+)
+p1 
+
+```
+
+
+#4-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
+
+
+```{r}
+#use ans ELBOWPLOT:shows the variance explained by each principal component (PC).You use it to decide how many PCs to keep
+ElbowPlot(lec_obj, ndims = 50, reduction = "pca") +
+  ggtitle("Elbow plot - LEC sample")
+
+```
+#4_1 PERFORM DIFFERENT RESOLUTION
+```{r}
+
+library(RColorBrewer)
+#for color 
+# Number of clusters
+n_clusters <- length(levels(Idents(lec_obj)))
+
+# Create enough distinct colors
+if(n_clusters <= 12){
+  my_colors <- brewer.pal(n_clusters, "Paired")
+} else {
+  # For more than 12 clusters, interpolate a larger palette
+  my_colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+}
+
+# Set identities if not already
+Idents(lec_obj) <- "harmony_clusters"  # replace with your cluster column
+#1 Build the nearest-neighbor graph (required before clustering)
+lec_obj <- FindNeighbors(lec_obj, dims = 1:30, reduction = "harmony")
+
+##
+#2 Create clusters at resolutions from 0.3 to 1.0
+for (res in seq(0.3,1, by = 0.1)) {
+  lec_obj <- FindClusters(lec_obj, resolution = res)
+}
+
+#3 Get all clustering resolution columns from metadata
+res_cols <- grep("RNA_snn_res", colnames(lec_obj@meta.data), value = TRUE)
+
+
+#4 Plot each resolution separately
+for (res in res_cols) {
+  p <- DimPlot(lec_obj, group.by = res, label = TRUE, reduction =  "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+
+#5 (Optional) Combine all plots into one grid for comparison
+library(patchwork)
+
+plots <- lapply(res_cols, function(res) {
+  DimPlot(lec_obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste("Resolution:", res))
+})
+
+wrap_plots(plots)
+
+```
+
+#3-2 NOW CLUSTERS 
+i took 0.5 because the clusters are well separated,clear boundaries. For the rest we noticed clusters that split again into sub pieces
+```{r}
+#### clusters after integration
+lec_obj = FindNeighbors(lec_obj, reduction="harmony", dims = 1:30)
+lec_obj = FindClusters(lec_obj, resolution =0.5, cluster.name = "harmony_clusters") 
+```
+
+
+
+#3-3 COLORS FOR CLUSTERS(optional)
+
+```{r}
+##plots with the clusters with the resolution chosen
+
+library(RColorBrewer)
+
+# Number of clusters
+n_clusters <- length(levels(Idents(lec_obj)))
+
+# Create enough distinct colors
+if(n_clusters <= 12){
+  my_colors <- brewer.pal(n_clusters, "Paired")
+} else {
+  # For more than 12 clusters, interpolate a larger palette
+  my_colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+}
+
+# Set identities if not already
+Idents(lec_obj) <- "harmony_clusters"  # replace with your cluster column
+
+# Plot
+p = DimPlot(
+  lec_obj,
+  reduction = "umap.harmony",
+  label = TRUE,
+  label.size = 5,
+  repel = TRUE,
+  cols = my_colors
+  
+)
+p
+#ggsave(
+  #filename = "cluster.pdf",
+  #plot = p,
+  #width = 15,
+  #height = 12
+  
+#)
+```
+
+
+#4-FIND ALL MAKERS
+
+```{r}
+##find all markers###########################
+#first
+all_markers_lec <- FindAllMarkers(
+  lec_obj,
+  only.pos = TRUE,     # only genes upregulated in each cluster
+  min.pct = 0.25,      # minimum % of cells expressing the gene
+  logfc.threshold = 0.25
+)
+
+#filter for significance(IMPORTANT)
+all_markers_lec <- all_markers_lec %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0.25)
+
+##save it for next(important) 
+library(openxlsx)
+write.xlsx(
+  all_markers_lec,
+  file = "output/temp/all_markers_lec.xlsx"
+)
+
+
+###########################for just 30 markers  for the annotation ###############
+
+#1️⃣ Add gene and cluster info
+all_markers_lec$feature <- all_markers_lec$gene
+all_markers_lec$group <- all_markers_lec$cluster
+
+# 2️⃣ Keep only significant markers
+all_markers_lec <- all_markers_lec %>%
+  filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+
+# 3️⃣ Get cluster IDs
+clusters <- unique(all_markers_lec$group)
+
+# 4️⃣ Extract top 30 genes for each cluster
+top_genes_list <- list()
+
+for (clust in clusters) {
+  top_genes <- all_markers_lec %>%
+    filter(group == clust) %>%
+    arrange(desc(avg_log2FC)) %>%
+    slice_head(n = 30) %>%
+    pull(feature)
+  
+  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
+}
+
+# 5️⃣ Print top 30 marker genes for each cluster
+for (clust in names(top_genes_list)) {
+  cat("=== ", clust, " ===\n")
+  print(top_genes_list[[clust]])
+  cat("\n")
+}
+################
+```
+
+# LEST CHECK WHICH CLUSTERS ARE LEC BASEDE ON CANONICAL MARKER LEC
+
+Clusters expressing PROX1 + PDPN (+ at least one of the other markers) → definitely LEC
+
+LYVE1 helps you identify capillary LECs
+
+CLDN11, GJA4, PTX3, BMP2 → collecting or valve LECs
+
+ACKR4 → sinus / minor LEC subtypes
+
+```{r}
+lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
+DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen")) +
+  RotatedAxis() + ggtitle("Expression of Known LEC Markers Across Clusters")
+```
+
+According to the plot above, the cluster 4 have very low expression of the canonical marker so, we can remove theme
+
+
+#4-1 LET'S REMOVE THE CLUSTER THAT ARE NOT LEC
+```{r}
+#remove non-lec-clusters cause lack of markers from lecs
+lec_clusters_to_delete = setdiff(levels(Idents(lec_obj)), c("4"))
+lec_obj = subset(lec_obj, idents = lec_clusters_to_delete)
+table(Idents(lec_obj))
+```
+
+
+#5 LETS REPEAT THE SAME PROCESS WITH ONLY THE CLUSTER 6
+
+```{r}
+#####normalize,runpca,scal....
+lec_obj = NormalizeData(lec_obj)
+lec_obj = FindVariableFeatures(lec_obj)
+lec_obj = ScaleData(lec_obj, vars.to.regress = c("nCount_RNA", "percent.mt"))
+lec_obj = RunPCA(lec_obj)
+
+```
+
+#INtegration 
+```{r}
+##perform integration: no need to join layers###
+library(harmony)
+lec_obj =RunHarmony(
+  lec_obj, 
+  group.by.vars = "orig.ident",
+  orig.reduction = "pca", 
+  dims.use = 1:30
+)
+Reductions(lec_obj) # to check harmony: run succesfully
+
+#plot
+lec_obj <- RunUMAP(lec_obj, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+DimPlot(lec_obj, reduction = "umap.harmony", group.by = "sample")
+
+```
+
+
+#5-1LOOK FOR THE RESOLUTION
+
+```{r}
+#1 Build the nearest-neighbor graph (required before clustering)
+lec_obj <- FindNeighbors(lec_obj, dims = 1:30, reduction = "harmony")
+
+#2 Create clusters at resolutions from 0.3 to 1.0
+for (res in seq(0.3,1, by = 0.1)) {
+  lec_obj <- FindClusters(lec_obj, resolution = res)
+}
+
+#3 Get all clustering resolution columns from metadata
+res_cols <- grep("RNA_snn_res", colnames(lec_obj@meta.data), value = TRUE)
+
+
+#4 Plot each resolution separately
+for (res in res_cols) {
+  p <- DimPlot(lec_obj, group.by = res, label = TRUE, reduction =  "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+
+#5 (Optional) Combine all plots into one grid for comparison
+library(patchwork)
+
+plots <- lapply(res_cols, function(res) {
+  DimPlot(lec_obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste("Resolution:", res))
+})
+
+wrap_plots(plots)
+```
+
+#5-2clusters with the resolution choosed
+```{r}
+#### clusters after integration
+lec_obj = FindNeighbors(lec_obj, reduction="harmony", dims = 1:30)
+lec_obj = FindClusters(lec_obj, resolution =0.5, cluster.name = "harmony_clusters") 
+```
+
+#5-3UMAP WITH THE CHOSEN RESOLUTION
+```{r}
+# UMAP colored by clusters at resolution 0.6
+p=DimPlot(lec_obj, group.by = "harmony_clusters", reduction = "umap.harmony", label = TRUE) +
+  ggtitle("UMAP_LEC - Resolution 0.5")
+p
+#save
+ggsave(filename = "output/temp/umap_resolution_lec.png", plot = p, width = 10, height = 8)
+```
+
+
+
+#5-4 find all markers 
+```{r}
+##find all markers###########################
+#first
+all_markers_lec <- FindAllMarkers(
+  lec_obj,
+  only.pos = TRUE,     # only genes upregulated in each cluster
+  min.pct = 0.25,      # minimum % of cells expressing the gene
+  logfc.threshold = 0.25
+)
+
+#filter for significance(IMPORTANT)
+all_markers_lec <- all_markers_lec %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0.25)
+ 
+
+
+
+```
+
+
+
+#CONTINUE THE PROCESS NOW
+
+
+#6-THE NUMBER OF CELLS PER DONORS
+```{r}
+#WE extract the metadata , the columns we need: the cluster and the donor
+#orig.ident= which donor each cell belong , "harmony_clusters:which cluster each cell belong 
+# change the colname to donor
+lec_obj$Donors = lec_obj$orig.ident
+#create a meta: what we need for the plot 
+meta = lec_obj@meta.data[,c("harmony_clusters","Donors")]
+table(meta$Donors)
+```
+
+
+#6-1PLOTS THE NUMBER OF CELLS PER DONNORS
+```{r}
+library(ggplot2)
+
+# Count cells per donor
+cell_counts_per_donor <- as.data.frame(table(meta$Donors))
+colnames(cell_counts_per_donor) <- c("Donor", "CellCount")
+
+# Plot histogram (bar chart)
+p=ggplot(cell_counts_per_donor, aes(x = Donor, y = CellCount, fill = Donor)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Number of Cells per Donor in LEC",
+    x = "Donor",
+    y = "Number of Cells"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+p
+ggsave(filename = "output/temp/Numb_LEC_cell_Donor.png",
+  plot = p,
+  width = 15,
+  height = 12
+)
+
+```
+
+
+
+
+#7THE PROPORTION OF DONORS IN EACH CLUSTERS
+
+```{r, fig.width=10, fig.height=8}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Make sure dplyr functions are used explicitly
+meta = lec_obj@meta.data
+
+# Count cells per donor per cluster
+donors_counts <- meta %>%
+  dplyr::group_by(harmony_clusters, Donors) %>%
+  dplyr::summarise(CellCount = dplyr::n(), .groups = "drop")
+
+# Compute percentage of each donor in each cluster
+donors_counts <- donors_counts %>%
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::mutate(proportion = CellCount / sum(CellCount))
+
+# Plot the proportion per cluster
+p = ggplot(donors_counts, aes(x = harmony_clusters, y = proportion, fill = Donors)) +
+  geom_bar(stat = "identity", color = "white") +
+  geom_text(
+    aes(label = paste0(round(proportion * 100, 1), "%")),
+    position = position_stack(vjust = 0.5),
+    size = 2.5,
+    color = "black"
+  ) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_brewer(palette = "Set3") +
+  labs(
+    title = "Proportion of Donors per Cluster (LEC)",
+    x = "Cluster",
+    y = "Percentage of Cells"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "bottom"
+  )
+
+p
+  #save
+ggsave(filename = "output/temp/Prop_donor_lec.png", plot = p, width = 10, height = 8)
+
+
+```
+
+
+
+#8-Correlation of cluster gene expression based on marker genes only. -AverageExpression (using only the marker genes for all clusters)
+
+
+#8-1 the AverageExpression with markers genes(within clusters)
+```{r}
+#1-EXTRACT THE MARKER GENES#####
+library(openxlsx)
+colnames(all_markers_lec)
+
+#select col#if we have to save it but not necessary
+marker = all_markers_lec[, c("gene", "cluster", "avg_log2FC", "p_val_adj")]
+#remove duplicate
+marker_genes = unique(marker)
+
+#2-GET UNIQUE MARKER GENES
+marker_genes = unique(all_markers_lec$gene)
+
+#3 filter MG
+#all genes in rna assay
+gene_in_lec = rownames(lec_obj[["RNA"]])
+
+#only genes present in the object
+marker_genes_filtered <- marker_genes[marker_genes %in% gene_in_lec]
+
+length(marker_genes_filtered)  # should be > 0
+
+#4 averageEpression per cluster
+avr_exp = AverageExpression(
+  lec_obj,
+  features = marker_genes_filtered,
+  assays = "RNA",
+  slot = "data"
+)
+
+#3 to get the matrix 
+avr_exp_matrix = avr_exp$RNA
+dim(avr_exp_matrix)
+
+#save (important for later)
+saveRDS(avr_exp_matrix, file = "output/temp/avrEx_matrix_lec.RDS")
+#load
+#avr_exp_matrix = readRDS("output/temp/avrEx_matrix_lec.RDS")
+
+```
+
+
+#8-2 PLOT
+```{r}
+#plot
+library(pheatmap)
+p=pheatmap(
+  avr_exp_matrix,
+  scale = "row",
+  show_rownames = FALSE,
+  clustering_method = "ward.D2",
+  main = "Average Expression of Marker Genes per Cluster(LEC)"
+)
+p
+ggsave(
+  filename = "output/temp/avr_lec.png",
+  plot = p,
+  width = 10,
+  height = 8
+)
+```
+
+
+#9 THE CORRELATION (2 METHODES )
+```{r}
+#1-correlation between clusters(BEST ONE)
+#need numeric matrix
+avr_exp_matrix = as.matrix(avr_exp$RNA)
+cluster_cor = cor(avr_exp_matrix,method = "spearman") # or spearman
+```
+
+ 
+#9-PLOT
+```{r}
+#plots
+p=pheatmap(
+  cluster_cor,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  display_numbers = TRUE,
+  main = "Cluster Correlation based on Markers Genes"
+)
+ggsave(
+  filename =  "output/temp/cor_lec.png",
+  plot = p,
+  width = 10,
+  height = 8
+)
+```
+
+
+#10- we already have the marker we extract the top to do the annotation
+```{r}
+#
+
+
+all_markers_lec <- FindAllMarkers(
+  lec_obj,
+  only.pos = TRUE,     # only genes upregulated in each cluster
+  min.pct = 0.25,      # minimum % of cells expressing the gene
+  logfc.threshold = 0.25
+)
+
+#filter for significance(IMPORTANT)
+all_markers_lec <- all_markers_lec %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0.25)
+
+##save it for next(important) 
+library(openxlsx)
+write.xlsx(
+  all_markers_lec,
+  file = "output/temp/all_markers_lec.xlsx"
+)
+
+
+###########################for just 30 markers  for the annotation ###############
+
+#1️⃣ Add gene and cluster info
+all_markers_lec$feature <- all_markers_lec$gene
+all_markers_lec$group <- all_markers_lec$cluster
+
+# 2️⃣ Keep only significant markers
+all_markers_lec <- all_markers_lec %>%
+  filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+
+# 3️⃣ Get cluster IDs
+clusters <- unique(all_markers_lec$group)
+
+# 4️⃣ Extract top 30 genes for each cluster
+top_genes_list <- list()
+
+for (clust in clusters) {
+  top_genes <- all_markers_lec %>%
+    filter(group == clust) %>%
+    arrange(desc(avg_log2FC)) %>%
+    slice_head(n = 30) %>%
+    pull(feature)
+  
+  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
+}
+
+# 5️⃣ Print top 30 marker genes for each cluster
+for (clust in names(top_genes_list)) {
+  cat("=== ", clust, " ===\n")
+  print(top_genes_list[[clust]])
+  cat("\n")
+}
+
+```
+ 
+ 
+ 
+ 
+#10-1 DOTPLOT WITH THE MARKER LEC TO MAKE THE ANNOTATION
+```{r}
+lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
+p=DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen")) +
+  RotatedAxis() + ggtitle("Expression of Known LEC Markers Across Clusters")
+p
+#save
+ggsave(filename = "output/temp/lec_marker_dot_plot.png", plot = p, width = 10, height = 8)
+```
+ 
+ 
+ 
+#10-1-ANNOTATIONS BASED ON THE CORRELATION
+#:Clusters expressing PROX1 + PDPN (+ at least one of the other markers) → definitely LEC
+
+#LYVE1 helps you identify capillary LECs
+
+#CLDN11, GJA4, PTX3, BMP2 → collecting or valve LECs
+
+#ACKR4 → sinus / minor LEC subtypes
+
+```{r}
+new_ann = c(
+  "0"="bLEC","1"="bLEC","2"="bLEC","3"="fLEC","4"="bLEC","5"="bLEC","6"="bLEC","7"="Down-valveLEC","8"="bLEC","9"="msLEC","10"="fLEC","11"="Down-valveLEC","12"="msLEC","13"="Down-valveLEC","14"="bLEC"
+)
+
+#Save the cell type labels in metadata
+lec_obj$new_ann = (mapvalues(
+  x = as.character(lec_obj$harmony_clusters),#map numb as string
+  from = names(new_ann),
+  to = new_ann
+))
+
+ #Convert to factor and drop unused levels
+lec_obj$new_ann <- factor(lec_obj$new_ann, levels = unique(new_ann))
+table(lec_obj$new_ann)
+plt = DimPlot(
+  lec_obj,
+  reduction = "umap.harmony",
+  group.by = "new_ann",   # legend will show cell type names
+  label = T,            # optional: add labels on UMAP
+  repel = TRUE,            # avoid overlapping labels
+  pt.size = 0.5
+) 
+plt
+
+ggsave(
+  filename = "output/temp/lec_annotation_umap.png",
+  plot = plt,
+  width = 10,
+  height = 8
+  
+)
+```
+
+
+```{r}
+head(lec_obj@meta.data)
+
+lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
+p=DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen"), group.by = "new_ann") +
+  RotatedAxis() + ggtitle("Expression LEC Markers Across Clusters names")
+p
+#save
+ggsave(filename = "output/temp/lec_cluster_dot_plot.png", plot = p, width = 10, height = 8)
+```
+
+```{r}
+rm(list = ls())
+```
+
+ 
+ 
+
+```{r}
+#save the file 
+#saveRDS(lec_obj, file = "data/process/temp/lec_obj.RDS")
+
+#run later
+lec_obj = readRDS("data/process/temp/lec_obj.RDS")
+#file.info("data/process/temp/lec_obj.RDS")
+#recommaanded
+#lec_obj <- UpdateSeuratObject(lec_obj)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

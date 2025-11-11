@@ -1,0 +1,492 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+
+######ANALYSIS OF STROMAL SUBCLUSTERS:PERCENTAGE OF DONORS, AVERAGE EXPRESSION AND CORRELATION#########
+
+
+#THE PATH
+```{r setup, include=FALSE}
+library(knitr)
+library(rprojroot)
+
+# Trouve automatiquement le dossier racine du projet (là où est ton fichier .Rproj)
+project_root <- rprojroot::find_root(rprojroot::has_file("LAB_DOCS.Rproj"))
+
+# Définit ce dossier comme racine pour tout le document
+knitr::opts_knit$set(root.dir = project_root)
+
+# (optionnel) Vérifie le chemin
+cat("Root directory for knitting:", knitr::opts_knit$get("root.dir"), "\n")
+set.seed(123)
+```
+
+
+
+```{r}
+##packages
+library(pacman)
+p_load(Seurat,SeuratData,Matrix,dplyr,DropletUtils,presto,gprofiler2,ggplot2,patchwork,gplots,cowplot,gprofiler2,openxlsx, plyr,scDblFinder,BiocParallel)
+```
+
+
+
+#1-LOAD THE DATA
+
+```{r}
+##load the data: from the initial code harmony2.rmd
+
+stromal_obj = readRDS("data/process/temp/stromal_subset.rds")
+table(stromal_obj$celltype)
+
+```
+
+
+#2NORM, FVF, SCALE AND RUNPCA
+```{r}
+##the same process
+#normalize,scale, run_pca, findvarfeature
+stromal_obj = NormalizeData(stromal_obj)
+stromal_obj = FindVariableFeatures(stromal_obj)
+stromal_obj = ScaleData(stromal_obj,vars.to.regress = c("nCount_RNA", "percent.mt"))
+stromal_obj = RunPCA(stromal_obj)
+```
+
+
+
+#3PERFORM INTEGRATION
+```{r}
+
+##perform integration: no need to join layers###
+library(harmony)
+stromal_obj =RunHarmony(
+  stromal_obj, 
+  group.by.vars = "orig.ident",
+  orig.reduction = "pca", 
+  dims.use = 1:30
+)
+Reductions(stromal_obj) # to check harmony: run succesfully
+
+#visualization
+stromal_obj = RunUMAP(stromal_obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+p1=DimPlot(
+  stromal_obj,
+  reduction = "umap.harmony",
+  group.by = c("sample"),
+ label.size = 2, shuffle = T
+)
+p1 
+```
+
+
+
+#4-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
+
+```{r}
+#use ans ELBOWPLOT:shows the variance explained by each principal component (PC).You use it to decide how many PCs to keep
+ElbowPlot(stromal_obj, ndims = 50, reduction = "pca") +
+  ggtitle("Elbow plot - Stromal sample")
+```
+
+
+#4-1 PERFORM DIFFERENT RESOLUTION
+```{r}
+#1 Build the nearest-neighbor graph (required before clustering)
+stromal_obj <- FindNeighbors(stromal_obj, dims = 1:30, reduction = "harmony")
+
+#2 Create clusters at resolutions from 0.3 to 1.0
+for (res in seq(0.1,1, by = 0.1)) {
+  stromal_obj <- FindClusters(stromal_obj, resolution = res)
+}
+
+#3 Get all clustering resolution columns from metadata
+res_cols <- grep("RNA_snn_res", colnames(stromal_obj@meta.data), value = TRUE)
+
+
+#4 Plot each resolution separately
+for (res in res_cols) {
+  p <- DimPlot(stromal_obj, group.by = res, label = TRUE, reduction =  "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+
+#5 (Optional) Combine all plots into one grid for comparison
+library(patchwork)
+
+plots <- lapply(res_cols, function(res) {
+  DimPlot(stromal_obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste("Resolution:", res))
+})
+
+wrap_plots(plots)
+
+```
+
+#4-2CLUSTERS NOW
+
+```{r}
+### clusters after integration
+stromal_obj = FindNeighbors(stromal_obj, reduction="harmony", dims = 1:30)
+stromal_obj = FindClusters(stromal_obj, resolution =0.6, cluster.name = "harmony_clusters") 
+```
+
+
+#5-PLOT FOR CLUSTERS
+```{r}
+##plots with the clusters
+
+library(RColorBrewer)
+
+# Number of clusters
+n_clusters <- length(levels(Idents(stromal_obj)))
+
+# Create enough distinct colors
+if(n_clusters <= 12){
+  my_colors <- brewer.pal(n_clusters, "Paired")
+} else {
+  # For more than 12 clusters, interpolate a larger palette
+  my_colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+}
+
+# Set identities if not already
+Idents(stromal_obj) <- "seurat_clusters"  # replace with your cluster column
+
+# Plot
+p = DimPlot(
+  stromal_obj,
+  reduction = "umap.harmony",
+  label = TRUE,
+  label.size = 5,
+  repel = TRUE,
+  cols = my_colors
+)
+p
+```
+
+
+#6-FIND ALL MARKERS IN ALL CLUSTERS
+```{r}
+##find all markers###########################
+#first
+all_markers_stromal <- FindAllMarkers(
+  stromal_obj,
+  only.pos = TRUE,     # only genes upregulated in each cluster
+  min.pct = 0.25,      # minimum % of cells expressing the gene
+  logfc.threshold = 0.25
+)
+# 2️⃣ Keep only significant markers
+all_markers_stromal <- all_markers_stromal %>%
+  filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+
+library(openxlsx)
+# save (important)
+write.xlsx(
+  all_markers_stromal,
+  file = "output/temp/all_markers_stromal.xlsx"
+)
+
+
+#######this is to extract the top 30 markers ########
+
+#1️⃣ Add gene and cluster info
+all_markers_stromal$feature <- all_markers_stromal$gene
+all_markers_stromal$group <- all_markers_stromal$cluster
+
+
+
+# 3️⃣ Get cluster IDs
+clusters <- unique(all_markers_stromal$group)
+
+# 4️⃣ Extract top 30 genes for each cluster
+top_genes_list <- list()
+
+for (clust in clusters) {
+  top_genes <- all_markers_stromal %>%
+    filter(group == clust) %>%
+    arrange(desc(avg_log2FC)) %>%
+    slice_head(n = 30) %>%
+    pull(feature)
+  
+  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
+}
+
+# 5️⃣ Print top 30 marker genes for each cluster
+for (clust in names(top_genes_list)) {
+  cat("=== ", clust, " ===\n")
+  print(top_genes_list[[clust]])
+  cat("\n")
+}
+```
+
+#6-1 LETS SEE IF THEY ARE STROMAL WITH THE MARKER :
+#FBN1 PCOLCE2 CD34  PLA2G2A SFRP2  C7 CXCL12 COL15A1  PTX3 TNFAIP6 CCL2  APOE APOC1 AGT  CCL19 CCL8 CCL21  NDUFA4L2 HIGD1B  TNFSF13B VCAM1  FDCSP CXCL13 CR2  SFRP4 WISP2 NOV  MYH11 ACTA2 PLN
+
+```{r, fig.width=10, fig.height=8}
+stromal_markers <- c("FBN1", "PCOLCE2", "CD34",  "PLA2G2A", "SFRP2","CXCL12", "COL15A1",  "PTX3", "TNFAIP6", "CCL2",  "APOE", "APOC1", "AGT",  "CCL19", "CCL8", "CCL21",  "NDUFA4L2", "HIGD1B",  "TNFSF13B", "VCAM1",  "FDCSP", "CXCL13", "CR2",  "SFRP4", "WISP2", "NOV",  "MYH11", "ACTA2", "PLN")
+p=DotPlot(stromal_obj, features = stromal_markers, cols = c("lightgrey", "darkgreen")) +
+  RotatedAxis() + ggtitle("Expression of Known STROMAL Markers Across Clusters")
+p
+#save
+ggsave(filename = "output/temp/stromal_markers_dot_plot.png", plot = p,width = 10, height = 8)
+```
+
+#7-THE NUMBER OF CELLS PER DONOR 
+```{r}
+
+#change colname 
+stromal_obj$Donors = stromal_obj$orig.ident
+
+#create the meta data
+meta = stromal_obj@meta.data[, c("harmony_clusters", "Donors")]
+table(meta$Donors)
+```
+
+
+#7-1PLOT
+```{r}
+#1-counts cells per donor
+cell_counts_per_donor = as.data.frame(table(meta$Donors))
+colnames(cell_counts_per_donor) = c("Donor", "CellCount")
+
+#2-plot the histogramme
+p=ggplot(cell_counts_per_donor,aes(x=Donor, y=CellCount, fill = Donor)) +
+  geom_bar(stat = "identity")+
+  theme_minimal()+
+  labs(
+    title = "Number of Cell per Donor in STROMAL",
+    x= "Donor", 
+    y= "Number of cells"
+  )+
+  theme (
+    axis.text.x = element_text(angle = 45,hjust = 1),
+    legend.position = "none"
+  )
+p
+#save
+ggsave(filename = "output/temp/Numb_STROMAL_cell_per_Donor.png", plot = p, height = 8, width = 10)
+```
+
+#8-THE PROPORTION OF DONORS IN EACH CLUSTERS
+```{r,fig.width=10, fig.height=8}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+
+# Make sure dplyr functions are used explicitly
+meta = stromal_obj@meta.data
+
+#the  percentage 
+donors_counts = meta %>%
+  as_tibble() %>%
+  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
+  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
+
+ 
+#plot
+my_colors <- brewer.pal(12, "Set3") #color
+p= ggplot(donors_counts, aes(x = harmony_clusters, y = proportion, fill = Donors)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = scales::percent(proportion, accuracy = 1)), #to see the proportion 
+            position = position_stack(vjust = 0.5), size = 3) +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "PROPORTION OF Donor in STROMAL_CLUSTER ",
+       x = "Cluster", y = "Proportion of cells") +
+  theme_minimal()
+p
+  #save
+ggsave(filename = "output/temp/Prop_donor_stromal.png", plot = p, width = 10, height = 8)
+```
+
+
+
+
+#9-Correlation of cluster gene expression based on marker genes only. -AverageExpression (using only the marker genes for all clusters)
+
+#9-1 the AverageExpression with markers genes(within clusters)
+```{r}
+#1-EXTRACT THE MARKER GENES#####
+library(openxlsx)
+colnames(all_markers_stromal)
+
+#select 
+marker = all_markers_stromal[, c("gene", "cluster", "avg_log2FC", "p_val_adj")]
+#remove duplicate
+marker_genes = unique(marker)
+
+#2-GET UNIQUE MARKER GENES
+marker_genes = unique(all_markers_stromal$gene)
+
+#3 filter MG
+#all genes in rna assay
+gene_in_stromal = rownames(stromal_obj[["RNA"]])
+
+#only genes present in the object
+marker_genes_filtered <- marker_genes[marker_genes %in% gene_in_stromal]
+
+length(marker_genes_filtered)  # should be > 0
+
+#4 averageEpression per cluster
+avr_exp = AverageExpression(
+  stromal_obj,
+  features = marker_genes_filtered,
+  assays = "RNA",
+  slot = "data"
+)
+
+#3 to get the matrix 
+avr_exp_matrix = avr_exp$RNA
+dim(avr_exp_matrix)
+
+
+```
+
+
+#9-1-1PLOT
+```{r}
+#plot
+library(pheatmap)
+p=pheatmap(
+  avr_exp_matrix,
+  scale = "row",
+  show_rownames = FALSE,
+  clustering_method = "ward.D2",
+  main = "Average Expression of Marker Genes per BEC_Cluster"
+)
+p
+ggsave(
+  filename = "output/temp/avr_stromal.png",
+  plot = p,
+  width = 10,
+  height = 8
+)
+```
+
+#9-2 THE CORRELATION 
+```{r}
+#1-correlation between clusters
+#need numeric matrix
+avr_exp_matrix = as.matrix(avr_exp$RNA)
+#correlation
+cluster_cor = cor(avr_exp_matrix,method = "spearman") # or spearman
+```
+
+
+
+
+#9-2-2 PLOT
+```{r}
+#plots
+p=pheatmap(
+  cluster_cor,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  display_numbers = TRUE,
+  main = "Cluster Correlation based on STROMAL Markers Genes"
+)
+p
+
+#to save
+ggsave(file ="output/temp/cor_stromal.png", plot = p, width = 10, height = 8, dpi = 300)
+```
+
+```{r, fig.width=10, fig.height=8}
+stromal_markers <- c("FBN1", "PCOLCE2", "CD34",  "PLA2G2A", "SFRP2","CXCL12", "COL15A1",  "PTX3", "TNFAIP6", "CCL2",  "APOE", "APOC1", "AGT",  "CCL19", "CCL8", "CCL21",  "NDUFA4L2", "HIGD1B",  "TNFSF13B", "VCAM1",  "FDCSP", "CXCL13", "CR2",  "SFRP4", "WISP2", "NOV",  "MYH11", "ACTA2", "PLN")
+p=DotPlot(stromal_obj, features = stromal_markers, cols = c("lightgrey", "darkgreen")) +
+  RotatedAxis() + ggtitle("Expression of Known STROMAL Markers Across Clusters")
+p
+```
+
+
+
+
+#10 ANNOTATION:USE THE CORRELATION AND THE DOTPLOT TO DO THE ANNOTATION
+```{r}
+#BASED ON THE EXPRESSION OF MARKERS FROM #5 and the CORRELATION LETS ANNOTATE
+new_ann = c(
+  "0"="advSC", "1"="advSC", "2"="VSMC", "3"="advSC", "4"="advSC", "5"="VSMC", "6"="advSC", "7"="advSC", "8"="VSMC", "9"="VSMC", "10"="FRC", "11"="advSC", "12"="FDC", "13"="advSC"
+)
+
+#Save the cell type labels in metadata
+stromal_obj$new_ann = (mapvalues(
+  x = as.character(stromal_obj$harmony_clusters),#map numb as string
+  from = names(new_ann),
+  to = new_ann
+))
+
+ #Convert to factor and drop unused levels
+stromal_obj$new_ann <- factor(stromal_obj$new_ann, levels = unique(new_ann))
+table(stromal_obj$new_ann)
+plt = DimPlot(
+  stromal_obj,
+  reduction = "umap.harmony",
+  group.by = "new_ann",   # legend will show cell type names
+  label = T,            # optional: add labels on UMAP
+  repel = TRUE,            # avoid overlapping labels
+  pt.size = 0.5
+) 
+plt
+
+ggsave(
+  filename = "output/temp/stromal_annotation_umap.png",
+  plot = plt,
+  width = 10,
+  height = 8
+)
+```
+
+#11-DOTPLOT WITH THE CELLNAME
+```{r, fig.width=10, fig.height=8}
+stromal_markers <- c("FBN1", "PCOLCE2", "CD34",  "PLA2G2A", "SFRP2","CXCL12", "COL15A1",  "PTX3", "TNFAIP6", "CCL2",  "APOE", "APOC1", "AGT",  "CCL19", "CCL8", "CCL21",  "NDUFA4L2", "HIGD1B",  "TNFSF13B", "VCAM1",  "FDCSP", "CXCL13", "CR2",  "SFRP4", "WISP2", "NOV",  "MYH11", "ACTA2", "PLN")
+p=DotPlot(stromal_obj, features = stromal_markers, cols = c("lightgrey", "darkgreen"), group.by = "new_ann") +
+  RotatedAxis() + ggtitle("Expression of Known STROMAL Markers Across Clusters")
+p
+#save
+ggsave(filename = "output/temp/stromal_cluster_dot_plot.png", plot = p, width = 10, height = 8)
+```
+
+
+
+
+
+
+```{r}
+##save the file and open a new script to remove and keep this to always have the scripts.
+saveRDS(stromal_obj, file = "data/process/temp/stromal_obj.RDS")
+
+## run it later to load all 
+#stromal_obj = readRDS("data/process/temp/stromal_obj.RDS")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
