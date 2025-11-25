@@ -3,19 +3,6 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-
-```{r}
-plot(cars)
-```
-
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
-
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
 
 
 ####### ANALYSIS OF LEC SUBCLUSTERS:DONORS, AVERAGE EXPRESSION AND CORRELATION ################mnbc  
@@ -68,7 +55,14 @@ lec_obj = RunPCA(lec_obj)
 
 ```
 
-#3-PERFORM INTEGRATION
+#3-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
+
+```{r}
+ElbowPlot(lec_obj, ndims = 50)
+```
+
+
+#4-PERFORM INTEGRATION
 
 ```{r}
 ##perform integration: no need to join layers###
@@ -94,15 +88,6 @@ p1
 ```
 
 
-#4-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
-
-
-```{r}
-#use ans ELBOWPLOT:shows the variance explained by each principal component (PC).You use it to decide how many PCs to keep
-ElbowPlot(lec_obj, ndims = 50, reduction = "pca") +
-  ggtitle("Elbow plot - LEC sample")
-
-```
 #4_1 PERFORM DIFFERENT RESOLUTION
 ```{r}
 
@@ -195,13 +180,7 @@ p = DimPlot(
   
 )
 p
-#ggsave(
-  #filename = "cluster.pdf",
-  #plot = p,
-  #width = 15,
-  #height = 12
-  
-#)
+
 ```
 
 
@@ -210,7 +189,7 @@ p
 ```{r}
 ##find all markers###########################
 #first
-all_markers_lec <- FindAllMarkers(
+all_markers_lec = FindAllMarkers(
   lec_obj,
   only.pos = TRUE,     # only genes upregulated in each cluster
   min.pct = 0.25,      # minimum % of cells expressing the gene
@@ -227,72 +206,67 @@ write.xlsx(
   all_markers_lec,
   file = "output/temp/all_markers_lec.xlsx"
 )
-
+View(all_markers_lec)
 
 ###########################for just 30 markers  for the annotation ###############
 
 #1️⃣ Add gene and cluster info
-all_markers_lec$feature <- all_markers_lec$gene
-all_markers_lec$group <- all_markers_lec$cluster
+#all_markers_lec$feature <- all_markers_lec$gene
+#all_markers_lec$group <- all_markers_lec$cluster
 
 # 2️⃣ Keep only significant markers
-all_markers_lec <- all_markers_lec %>%
-  filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+#all_markers_lec <- all_markers_lec %>%
+  #filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 
 # 3️⃣ Get cluster IDs
-clusters <- unique(all_markers_lec$group)
+#clusters <- unique(all_markers_lec$group)
 
 # 4️⃣ Extract top 30 genes for each cluster
-top_genes_list <- list()
+#top_genes_list <- list()
 
-for (clust in clusters) {
-  top_genes <- all_markers_lec %>%
-    filter(group == clust) %>%
-    arrange(desc(avg_log2FC)) %>%
-    slice_head(n = 30) %>%
-    pull(feature)
+#for (clust in clusters) {
+  #top_genes <- all_markers_lec %>%
+    #filter(group == clust) %>%
+    #arrange(desc(avg_log2FC)) %>%
+    #slice_head(n = 30) %>%
+    #pull(feature)
   
-  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
-}
+  #top_genes_list[[paste0("cluster_", clust)]] <- top_genes
+#}
 
 # 5️⃣ Print top 30 marker genes for each cluster
-for (clust in names(top_genes_list)) {
-  cat("=== ", clust, " ===\n")
-  print(top_genes_list[[clust]])
-  cat("\n")
-}
+#for (clust in names(top_genes_list)) {
+  #cat("=== ", clust, " ===\n")
+  #print(top_genes_list[[clust]])
+  #cat("\n")
+#}
 ################
 ```
 
-# LEST CHECK WHICH CLUSTERS ARE LEC BASEDE ON CANONICAL MARKER LEC
+# LEST CHECK WHICH CLUSTERS ARE LEC BASEDE ON CANONICAL MARKER LEC FROM THE PAPER
 
-Clusters expressing PROX1 + PDPN (+ at least one of the other markers) → definitely LEC
 
-LYVE1 helps you identify capillary LECs
-
-CLDN11, GJA4, PTX3, BMP2 → collecting or valve LECs
-
-ACKR4 → sinus / minor LEC subtypes
 
 ```{r}
-lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
-DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen")) +
+lec_markers <- c("ACKR4","SERPINE1","BMP2","CXCL5","MARCO","MFAP4","PTX3","CLDN11","GJA4")
+DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen"), cluster.idents = T,
+        group.by = "harmony_clusters") +
   RotatedAxis() + ggtitle("Expression of Known LEC Markers Across Clusters")
 ```
 
-According to the plot above, the cluster 4 have very low expression of the canonical marker so, we can remove theme
+According to the plot above, the cluster 4 and 12 have very low expression of the canonical marker so, we can remove theme. 4 is some type of epithelial cells (EPCAM expression); 12 is B cells (immunoglobulins).
 
 
 #4-1 LET'S REMOVE THE CLUSTER THAT ARE NOT LEC
 ```{r}
 #remove non-lec-clusters cause lack of markers from lecs
-lec_clusters_to_delete = setdiff(levels(Idents(lec_obj)), c("4"))
+lec_clusters_to_delete = setdiff(levels(Idents(lec_obj)), c("4","12"))
 lec_obj = subset(lec_obj, idents = lec_clusters_to_delete)
 table(Idents(lec_obj))
 ```
 
 
-#5 LETS REPEAT THE SAME PROCESS WITH ONLY THE CLUSTER 6
+#5 LETS REPEAT THE SAME PROCESS WITH ONLY THE CLUSTER 
 
 ```{r}
 #####normalize,runpca,scal....
@@ -300,10 +274,10 @@ lec_obj = NormalizeData(lec_obj)
 lec_obj = FindVariableFeatures(lec_obj)
 lec_obj = ScaleData(lec_obj, vars.to.regress = c("nCount_RNA", "percent.mt"))
 lec_obj = RunPCA(lec_obj)
-
 ```
 
-#INtegration 
+
+#6-INTEGRATE AGAIN
 ```{r}
 ##perform integration: no need to join layers###
 library(harmony)
@@ -315,14 +289,20 @@ lec_obj =RunHarmony(
 )
 Reductions(lec_obj) # to check harmony: run succesfully
 
-#plot
-lec_obj <- RunUMAP(lec_obj, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
-DimPlot(lec_obj, reduction = "umap.harmony", group.by = "sample")
-
+#visualization
+lec_obj = RunUMAP(lec_obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+p1=DimPlot(
+  lec_obj,
+  reduction = "umap.harmony",
+  group.by = c("sample"),
+ label.size = 2, shuffle = T
+)
+p1 
 ```
 
 
-#5-1LOOK FOR THE RESOLUTION
+
+#7-LOOK FOR THE RESOLUTION
 
 ```{r}
 #1 Build the nearest-neighbor graph (required before clustering)
@@ -355,15 +335,16 @@ plots <- lapply(res_cols, function(res) {
 wrap_plots(plots)
 ```
 
-#5-2clusters with the resolution choosed
+#7-1-clusters with the resolution choosed
 ```{r}
 #### clusters after integration
 lec_obj = FindNeighbors(lec_obj, reduction="harmony", dims = 1:30)
 lec_obj = FindClusters(lec_obj, resolution =0.5, cluster.name = "harmony_clusters") 
 ```
 
-#5-3UMAP WITH THE CHOSEN RESOLUTION
-```{r}
+
+#7-2UMAP WITH THE CHOSEN RESOLUTION
+```{r,fig.width=10,fig.height=8}
 # UMAP colored by clusters at resolution 0.6
 p=DimPlot(lec_obj, group.by = "harmony_clusters", reduction = "umap.harmony", label = TRUE) +
   ggtitle("UMAP_LEC - Resolution 0.5")
@@ -374,11 +355,11 @@ ggsave(filename = "output/temp/umap_resolution_lec.png", plot = p, width = 10, h
 
 
 
-#5-4 find all markers 
+#8 find all markerr again. Use different name to make differences from the firsts markers before the removing 
 ```{r}
 ##find all markers###########################
 #first
-all_markers_lec <- FindAllMarkers(
+all_markers = FindAllMarkers(
   lec_obj,
   only.pos = TRUE,     # only genes upregulated in each cluster
   min.pct = 0.25,      # minimum % of cells expressing the gene
@@ -386,11 +367,17 @@ all_markers_lec <- FindAllMarkers(
 )
 
 #filter for significance(IMPORTANT)
-all_markers_lec <- all_markers_lec %>%
+all_markers = all_markers %>%
   filter(p_val_adj < 0.05, avg_log2FC > 0.25)
  
 
-
+##save it for next(important) 
+library(openxlsx)
+write.xlsx(
+  all_markers,
+  file = "output/temp/all_markers_filter_lec.xlsx"
+)
+View(all_markers)
 
 ```
 
@@ -399,125 +386,127 @@ all_markers_lec <- all_markers_lec %>%
 #CONTINUE THE PROCESS NOW
 
 
-#6-THE NUMBER OF CELLS PER DONORS
+#9-THE NUMBER OF CELLS PER DONORS
 ```{r}
-#WE extract the metadata , the columns we need: the cluster and the donor
-#orig.ident= which donor each cell belong , "harmony_clusters:which cluster each cell belong 
-# change the colname to donor
+#change the colname 
 lec_obj$Donors = lec_obj$orig.ident
-#create a meta: what we need for the plot 
-meta = lec_obj@meta.data[,c("harmony_clusters","Donors")]
+
+#create the metadata
+meta= lec_obj@meta.data[, c("harmony_clusters", "Donors")]
 table(meta$Donors)
-```
 
-
-#6-1PLOTS THE NUMBER OF CELLS PER DONNORS
-```{r}
-library(ggplot2)
 
 # Count cells per donor
 cell_counts_per_donor <- as.data.frame(table(meta$Donors))
 colnames(cell_counts_per_donor) <- c("Donor", "CellCount")
+```
 
-# Plot histogram (bar chart)
-p=ggplot(cell_counts_per_donor, aes(x = Donor, y = CellCount, fill = Donor)) +
-  geom_bar(stat = "identity") +
+
+#9-1PLOTS THE NUMBER OF CELLS PER DONNORS
+```{r}
+####
+
+p <- ggplot(cell_counts_per_donor, aes(x = Donor, y = CellCount)) +
+  geom_segment(aes(x = Donor, xend = Donor, y = 0, yend = CellCount), size = 1) +
+  geom_point(size = 5, color = "steelblue") +
   theme_minimal() +
   labs(
-    title = "Number of Cells per Donor in LEC",
+    title = "Number of Cells per Donor (LEC)",
     x = "Donor",
-    y = "Number of Cells"
+    y = "Cell Count"
   ) +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
+    axis.text.x = element_text(angle = 45, hjust = 1)
   )
 p
-ggsave(filename = "output/temp/Numb_LEC_cell_Donor.png",
-  plot = p,
-  width = 15,
-  height = 12
-)
+
+#save
+#ggsave(filename = "output/temp/Numb_LEC_cell_per_Donor.png", plot = p, height = 8, width = 10)
 
 ```
 
 
 
 
-#7THE PROPORTION OF DONORS IN EACH CLUSTERS
+#10-THE PROPORTION OF DONORS IN EACH CLUSTERS
 
-```{r, fig.width=10, fig.height=8}
-library(dplyr)
+```{r}
+
+  library(dplyr)
 library(ggplot2)
 library(scales)
+
 
 # Make sure dplyr functions are used explicitly
 meta = lec_obj@meta.data
 
-# Count cells per donor per cluster
-donors_counts <- meta %>%
-  dplyr::group_by(harmony_clusters, Donors) %>%
-  dplyr::summarise(CellCount = dplyr::n(), .groups = "drop")
-
-# Compute percentage of each donor in each cluster
-donors_counts <- donors_counts %>%
+#the  percentage 
+donors_counts = meta %>%
+  as_tibble() %>%
+  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
+  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
   dplyr::group_by(harmony_clusters) %>%
-  dplyr::mutate(proportion = CellCount / sum(CellCount))
-
-# Plot the proportion per cluster
-p = ggplot(donors_counts, aes(x = harmony_clusters, y = proportion, fill = Donors)) +
-  geom_bar(stat = "identity", color = "white") +
-  geom_text(
-    aes(label = paste0(round(proportion * 100, 1), "%")),
-    position = position_stack(vjust = 0.5),
-    size = 2.5,
-    color = "black"
-  ) +
-  scale_y_continuous(labels = percent_format()) +
-  scale_fill_brewer(palette = "Set3") +
-  labs(
-    title = "Proportion of Donors per Cluster (LEC)",
-    x = "Cluster",
-    y = "Percentage of Cells"
-  ) +
-  theme_minimal(base_size = 10) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    legend.position = "bottom"
-  )
-
-p
-  #save
-ggsave(filename = "output/temp/Prop_donor_lec.png", plot = p, width = 10, height = 8)
-
+  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
 
 ```
 
 
 
-#8-Correlation of cluster gene expression based on marker genes only. -AverageExpression (using only the marker genes for all clusters)
+#10-1-PLOT
+```{r, fig.width=10, fig.height=8}
+#####
+p <- ggplot(donors_counts, aes(
+  x = harmony_clusters,
+  y = proportion,
+  group = Donors,
+  color = Donors
+)) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  geom_point(size = 2.8, alpha = 0.9) +
+  scale_y_continuous(labels = scales::percent) +
+  # Use a colorblind-friendly palette with distinct colors
+  scale_color_brewer(palette = "Set1", name = "Donor") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Donor Proportion Across LEC Clusters",
+    x = "Cluster",
+    y = "Proportion (%)"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+p
+#save the plot
+ggsave(filename = "output/temp/Proportion_donor_per_LEC_cluster.png", plot = p, height = 8, width = 10)
+```
 
 
-#8-1 the AverageExpression with markers genes(within clusters)
+
+
+#11 the AverageExpression with markers genes(within clusters)
+
 ```{r}
 #1-EXTRACT THE MARKER GENES#####
 library(openxlsx)
-colnames(all_markers_lec)
+colnames(all_markers)
 
 #select col#if we have to save it but not necessary
-marker = all_markers_lec[, c("gene", "cluster", "avg_log2FC", "p_val_adj")]
+marker = all_markers[, c("gene", "cluster", "avg_log2FC", "p_val_adj")]
 #remove duplicate
 marker_genes = unique(marker)
 
 #2-GET UNIQUE MARKER GENES
-marker_genes = unique(all_markers_lec$gene)
+marker_genes = unique(all_markers$gene)
 
 #3 filter MG
 #all genes in rna assay
 gene_in_lec = rownames(lec_obj[["RNA"]])
 
 #only genes present in the object
-marker_genes_filtered <- marker_genes[marker_genes %in% gene_in_lec]
+marker_genes_filtered = marker_genes[marker_genes %in% gene_in_lec]
 
 length(marker_genes_filtered)  # should be > 0
 
@@ -541,7 +530,7 @@ saveRDS(avr_exp_matrix, file = "output/temp/avrEx_matrix_lec.RDS")
 ```
 
 
-#8-2 PLOT
+#11-1 PLOT
 ```{r}
 #plot
 library(pheatmap)
@@ -562,7 +551,7 @@ ggsave(
 ```
 
 
-#9 THE CORRELATION (2 METHODES )
+#12 THE CORRELATION (2 METHODES )
 ```{r}
 #1-correlation between clusters(BEST ONE)
 #need numeric matrix
@@ -570,8 +559,10 @@ avr_exp_matrix = as.matrix(avr_exp$RNA)
 cluster_cor = cor(avr_exp_matrix,method = "spearman") # or spearman
 ```
 
+
+
  
-#9-PLOT
+#12-1-PLOT
 ```{r}
 #plots
 p=pheatmap(
@@ -590,92 +581,34 @@ ggsave(
 ```
 
 
-#10- we already have the marker we extract the top to do the annotation
+#13- ANNOTATION
+
+
+#13-1 DOTPLOT WITH THE MARKER LEC TO MAKE THE ANNOTATION
+
 ```{r}
-#
+#cluster.idents = put the similar cluster together  
 
-
-all_markers_lec <- FindAllMarkers(
-  lec_obj,
-  only.pos = TRUE,     # only genes upregulated in each cluster
-  min.pct = 0.25,      # minimum % of cells expressing the gene
-  logfc.threshold = 0.25
-)
-
-#filter for significance(IMPORTANT)
-all_markers_lec <- all_markers_lec %>%
-  filter(p_val_adj < 0.05, avg_log2FC > 0.25)
-
-##save it for next(important) 
-library(openxlsx)
-write.xlsx(
-  all_markers_lec,
-  file = "output/temp/all_markers_lec.xlsx"
-)
-
-
-###########################for just 30 markers  for the annotation ###############
-
-#1️⃣ Add gene and cluster info
-all_markers_lec$feature <- all_markers_lec$gene
-all_markers_lec$group <- all_markers_lec$cluster
-
-# 2️⃣ Keep only significant markers
-all_markers_lec <- all_markers_lec %>%
-  filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
-# 3️⃣ Get cluster IDs
-clusters <- unique(all_markers_lec$group)
-
-# 4️⃣ Extract top 30 genes for each cluster
-top_genes_list <- list()
-
-for (clust in clusters) {
-  top_genes <- all_markers_lec %>%
-    filter(group == clust) %>%
-    arrange(desc(avg_log2FC)) %>%
-    slice_head(n = 30) %>%
-    pull(feature)
-  
-  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
-}
-
-# 5️⃣ Print top 30 marker genes for each cluster
-for (clust in names(top_genes_list)) {
-  cat("=== ", clust, " ===\n")
-  print(top_genes_list[[clust]])
-  cat("\n")
-}
-
-```
- 
- 
- 
- 
-#10-1 DOTPLOT WITH THE MARKER LEC TO MAKE THE ANNOTATION
-```{r}
-lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
-p=DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen")) +
+lec_markers <- c("ACKR4","SERPINE1","BMP2","CXCL5","MARCO","MFAP4","PTX3","CLDN11","GJA4")
+p=DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen"), cluster.idents = T,
+        group.by = "harmony_clusters") +
   RotatedAxis() + ggtitle("Expression of Known LEC Markers Across Clusters")
 p
+
 #save
-ggsave(filename = "output/temp/lec_marker_dot_plot.png", plot = p, width = 10, height = 8)
+#ggsave(filename = "output/temp/lec_marker_dot_plot.png", plot = p, width = 10, height = 8)
+
 ```
- 
- 
- 
-#10-1-ANNOTATIONS BASED ON THE CORRELATION
-#:Clusters expressing PROX1 + PDPN (+ at least one of the other markers) → definitely LEC
 
-#LYVE1 helps you identify capillary LECs
 
-#CLDN11, GJA4, PTX3, BMP2 → collecting or valve LECs
 
-#ACKR4 → sinus / minor LEC subtypes
+ 
+#13-2-ANNOTATIONS BASED ON THE CORRELATION
+
 
 ```{r}
 new_ann = c(
-  "0"="bLEC","1"="bLEC","2"="bLEC","3"="fLEC","4"="bLEC","5"="bLEC","6"="bLEC","7"="Down-valveLEC","8"="bLEC","9"="msLEC","10"="fLEC","11"="Down-valveLEC","12"="msLEC","13"="Down-valveLEC","14"="bLEC"
+  "0"="bridge","1"="collect","2"="floor","3"="bridge","4"="bridge","5"="medullary-sinus","6"="bridge","7"="bridge","8"="bridge","9"="floor","10"="floor","11"="bridge","12"="floor","13"="bridge"
 )
 
 #Save the cell type labels in metadata
@@ -688,43 +621,87 @@ lec_obj$new_ann = (mapvalues(
  #Convert to factor and drop unused levels
 lec_obj$new_ann <- factor(lec_obj$new_ann, levels = unique(new_ann))
 table(lec_obj$new_ann)
+
+```
+
+
+#13-3 PLOT
+```{r}
+##
 plt = DimPlot(
   lec_obj,
   reduction = "umap.harmony",
-  group.by = "new_ann",   # legend will show cell type names
-  label = T,            # optional: add labels on UMAP
-  repel = TRUE,            # avoid overlapping labels
-  pt.size = 0.5
-) 
+  group.by = "new_ann",
+  label = TRUE,
+  repel = TRUE,
+  pt.size = 1.5
+) +
+  labs(color = "LEC Major Type", title = "Cell Types in Lymph Endothelial Cells") +
+  theme_classic() +
+  theme(
+    legend.key.size = unit(1.8, "lines"),   # increase the size of the colored boxes
+    legend.text = element_text(size = 20)   # increase the text labels
+  )
 plt
 
-ggsave(
-  filename = "output/temp/lec_annotation_umap.png",
-  plot = plt,
-  width = 10,
-  height = 8
-  
-)
+#save 
+ggsave(filename = "output/temp/LECCellType.png", plot = plt, width = 10, height = 8)
+
 ```
 
 
-```{r}
-head(lec_obj@meta.data)
 
-lec_markers <- c("CLDN11","GJA4","MFAP4","PTX3","BMP2","ACKR4","LYVE1","PROX1","PDPN")
-p=DotPlot(lec_obj, features = lec_markers, cols = c("lightgrey", "darkgreen"), group.by = "new_ann") +
-  RotatedAxis() + ggtitle("Expression LEC Markers Across Clusters names")
+
+#13-PLOT WITH THE MARKERS
+
+
+
+```{r,fig.width=10,fig.height=8}
+####
+lec_markers <- c("ACKR4","SERPINE1","BMP2","CXCL5","MARCO","MFAP4","PTX3","CLDN11","GJA4")
+
+p <- DotPlot(
+  lec_obj,
+  features = lec_markers,
+  cols = c("lightgrey", "darkgreen"),
+  group.by = "new_ann",
+  cluster.idents = TRUE
+) +
+  RotatedAxis() +
+  ggtitle("Expression LEC Markers Across Clusters") +
+  theme(
+    axis.text.y = element_text(size = 20),  # increase y-axis text
+    axis.text.x = element_text(size = 12)   # optional: increase x-axis text
+  )
+p
+
+#save
+#ggsave(filename = "output/temp/LECMarker.png", plot = p, width = 10, height = 8)
+```
+
+##vlnplot
+```{r}
+
+lec_markers <- c("ACKR4","CXCL5","PTX3")
+
+p=VlnPlot(
+  object = lec_obj,
+  features = lec_markers,
+  group.by = "new_ann",   # or use "seurat_clusters" depending on your metadata
+  pt.size = 0,            # remove points to make plot cleaner (optional)
+  cols = NULL             # default colors, or customize later
+)
 p
 #save
-ggsave(filename = "output/temp/lec_cluster_dot_plot.png", plot = p, width = 10, height = 8)
+ggsave(filename = "output/temp/LECMarker_vln_plot.png", plot = p, width = 10, height = 8)
+
 ```
 
-```{r}
-rm(list = ls())
-```
 
- 
- 
+
+
+
+
 
 ```{r}
 #save the file 
@@ -733,8 +710,7 @@ rm(list = ls())
 #run later
 lec_obj = readRDS("data/process/temp/lec_obj.RDS")
 #file.info("data/process/temp/lec_obj.RDS")
-#recommaanded
-#lec_obj <- UpdateSeuratObject(lec_obj)
+
 ```
 
 

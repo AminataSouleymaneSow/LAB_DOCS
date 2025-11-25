@@ -3,17 +3,7 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-
-
-
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
-
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
 
 
 ####################LOOK FOR SUBCLUSTERS IN BEC, THE DONORS AND CORRELATION #####################
@@ -44,11 +34,12 @@ set.seed(123)
 ```
 
 
-
+#ALL PACKAGES YOU NEED 
 ```{r}
 ##packages
 library(pacman)
 p_load(Seurat,SeuratData,Matrix,dplyr,DropletUtils,presto,gprofiler2,ggplot2,patchwork,gplots,cowplot,gprofiler2,openxlsx, plyr,scDblFinder,BiocParallel)
+
 ```
 
 
@@ -62,6 +53,7 @@ table(bec_obj$celltype)
 ```
 
 #2-NORM,FVF,SCALE AND RPCA
+
 ```{r}
 ###normalize, scale, runpca,find varfeature####
 
@@ -74,7 +66,19 @@ bec_obj = RunPCA(bec_obj)
 
 
 
-#3-INTEGRATIIN WITH HARMONY
+#3-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
+
+```{r}
+#use ans ELBOWPLOT:shows the variance explained by each principal component (PC).You use it to decide how many PCs to keep
+ElbowPlot(bec_obj, ndims = 50, reduction = "pca") +
+  ggtitle("Elbow plot - BEC sample")
+```
+
+
+
+
+
+#4-INTEGRATIIN WITH HARMONY
 ```{r}
 ##perform integration: no need to join layers###
 library(harmony)
@@ -100,15 +104,10 @@ p1
 
 
 
-#4-CHECK THE TRESHOLD FOR THE PCA AND THE RESOLUTION BEFORE FINDING THE CLUSTERS AFTER INTEGRATION.BASED ON DATA SIZE , WE CAN CHOSE A RANGE OF RESOLUTION
 
-```{r}
-#use ans ELBOWPLOT:shows the variance explained by each principal component (PC).You use it to decide how many PCs to keep
-ElbowPlot(bec_obj, ndims = 50, reduction = "pca") +
-  ggtitle("Elbow plot - BEC sample")
-```
 
-#4-1 PERFORM DIFFERENT RESOLUTION:
+
+#5-PERFORM DIFFERENT RESOLUTION:
 ```{r}
 
 #1 Build the nearest-neighbor graph (required before clustering)
@@ -142,8 +141,8 @@ wrap_plots(plots)
 
 ```
 
-#4-2 CLUSTERS 
 
+#5-1 CLUSTERS  with the resolution choosen
 
 ```{r}
 #### clusters after integration
@@ -153,7 +152,7 @@ bec_obj = FindClusters(bec_obj, resolution =0.5, cluster.name = "harmony_cluster
 
 
 
-#5 PLOTS WITH THE CLUSTERS
+#5-2 PLOTS 
 ```{r}
 ##plots with the clusters
 
@@ -177,7 +176,7 @@ Idents(bec_obj) <- "seurat_clusters"  # replace with your cluster column
 p = DimPlot(
   bec_obj,
   reduction = "umap.harmony",
-  label = TRUE,
+  label = T,
   label.size = 5,
   repel = TRUE,
   cols = my_colors
@@ -191,14 +190,14 @@ ggsave(filename = "output/temp/umap_bec_resolution.png", plot= p, width = 10, he
 ```{r}
 ##find all markers###########################
 #first
-all_markers_bec <- FindAllMarkers(
+all_markers_bec = FindAllMarkers(
   bec_obj,
   only.pos = TRUE,     # only genes upregulated in each cluster
   min.pct = 0.25,      # minimum % of cells expressing the gene
   logfc.threshold = 0.25
 )
 # 2️⃣ Keep only significant markers
-all_markers_bec <- all_markers_bec %>%
+all_markers_bec = all_markers_bec %>%
   filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 
 
@@ -208,57 +207,29 @@ write.xlsx(
   all_markers_bec,
   file = "output/temp/all_markers_bec.xlsx"
 )
-#to load
-#all_markers_bec = read.xlsx("output/temp/all_markers_bec.xlsx")
 
-#######this is to extract the top 30 markers ########
-
-#1️⃣ Add gene and cluster info
-all_markers_bec$feature <- all_markers_bec$gene
-all_markers_bec$group <- all_markers_bec$cluster
-
-
-
-# 3️⃣ Get cluster IDs
-clusters <- unique(all_markers_bec$group)
-
-# 4️⃣ Extract top 30 genes for each cluster
-top_genes_list <- list()
-
-for (clust in clusters) {
-  top_genes <- all_markers_bec %>%
-    filter(group == clust) %>%
-    arrange(desc(avg_log2FC)) %>%
-    slice_head(n = 30) %>%
-    pull(feature)
-  
-  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
-}
-
-# 5️⃣ Print top 30 marker genes for each cluster
-for (clust in names(top_genes_list)) {
-  cat("=== ", clust, " ===\n")
-  print(top_genes_list[[clust]])
-  cat("\n")
-}
+View(all_markers_bec)
 ```
 
-#5 CHECK IF THEY ARE BEC WITH THE CANONICAL MARKERS 
 
-```{r}
+
+
+#6-1 WE CHECK IF THE CLUSTER EXPRESS THE KEYS MARKERS WE SHOULD HAVE IN BEC POPULATION
+
+```{r,fig.width=10, fig.height=8}
 #
 bec_markers <- c("IGFBP3", "SSUH2", "S100A4", "INSR", "EDNRB", "KDR", "PGF", "CXCR4", "LY6H", "HSPA1A", "CDKN1A", "HES1", "G0S2","CH25H", "CXCL10", "CXCL11", "CXCL9", "CLU", "IL6","GJA4", "SEMA3G", "HEY1", "ACE",  "CA4", "RGCC", "CD36", "PLVAP", "CD300LG", "ACKR1", "MADCAM1", "SELE", "SELP", "VCAM1")
-p=DotPlot(bec_obj, features = bec_markers, cols = c("lightgrey", "darkgreen")) +
+p=DotPlot(bec_obj, features = bec_markers, cols = c("lightgrey", "darkgreen"), cluster.idents = T, 
+          group.by = "harmony_clusters") +
   RotatedAxis() + ggtitle("Expression of Known BEC Markers Across Clusters")
 p
-#save
-ggsave(filename = "output/temp/BEC_markers_dot_plot.png", plot = p,width = 10, height = 8)
+
 ```
 #All THE CLUSTERS PRESENT BEC MARKERS, SO ,NO NEED TO REMOVE ANY CLUSTER, WE MOVE FORWARD 
 
 
 
-#6-THE NUMBER OF CELLS PER DONORS 
+#7-THE NUMBER OF CELLS PER DONORS 
 ```{r}
 #change the colname 
 bec_obj$Donors = bec_obj$orig.ident
@@ -266,36 +237,42 @@ bec_obj$Donors = bec_obj$orig.ident
 #create the metadata
 meta= bec_obj@meta.data[, c("harmony_clusters", "Donors")]
 table(meta$Donors)
+
+
+# Count cells per donor
+cell_counts_per_donor <- as.data.frame(table(meta$Donors))
+colnames(cell_counts_per_donor) <- c("Donor", "CellCount")
 ```
 
-#6-1 PLOT IT
-```{r}
-#1-counts cells per donor
-cell_counts_per_donor = as.data.frame(table(meta$Donors))
-colnames(cell_counts_per_donor) = c("Donor", "CellCount")
 
-#2-plot the histogramme
-p=ggplot(cell_counts_per_donor,aes(x=Donor, y=CellCount, fill = Donor)) +
-  geom_bar(stat = "identity")+
-  theme_minimal()+
+
+#7-1 PLOT IT
+```{r}
+####
+
+p <- ggplot(cell_counts_per_donor, aes(x = Donor, y = CellCount)) +
+  geom_segment(aes(x = Donor, xend = Donor, y = 0, yend = CellCount), size = 1) +
+  geom_point(size = 5, color = "steelblue") +
+  theme_minimal() +
   labs(
-    title = "Number of Cell per Donor in BEC",
-    x= "Donor", 
-    y= "Number of cells"
-  )+
-  theme (
-    axis.text.x = element_text(angle = 45,hjust = 1),
-    legend.position = "none"
+    title = "Number of Cells per Donor (BEC)",
+    x = "Donor",
+    y = "Cell Count"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
   )
 p
+
 #save
 ggsave(filename = "output/temp/Numb_BEC_cell_per_Donor.png", plot = p, height = 8, width = 10)
 ```
 
 
 
-#7-THE PROPORTION OF DONORS IN EACH CLUSTERS
-```{r}
+
+#8-THE PROPORTION OF DONORS IN EACH CLUSTERS
+```{r, fig.width=12, fig.height=10}
 library(dplyr)
 library(ggplot2)
 library(scales)
@@ -312,31 +289,45 @@ donors_counts = meta %>%
   dplyr::group_by(harmony_clusters) %>%
   dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
 
- 
-#plot
-my_colors <- brewer.pal(12, "Set3") #color
-p= ggplot(donors_counts, aes(x = harmony_clusters, y = proportion, fill = Donors)) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = scales::percent(proportion, accuracy = 1)), #to see the proportion 
-            position = position_stack(vjust = 0.5), size = 3) +
-  scale_fill_brewer(palette = "Set3") +
-  labs(title = "PROPORTION OF Donor in BEC_CLUSTER ",
-       x = "Cluster", y = "Proportion of cells") +
-  theme_minimal()
-p
-  #save
-ggsave(filename = "output/temp/Prop_donor_bec.png", plot = p, width = 10, height = 8)
-
 
 ```
 
 
 
+#8-1 PLOT 
+```{r, fig.width=10, fig.height=8}
+#####
+p <- ggplot(donors_counts, aes(
+  x = harmony_clusters,
+  y = proportion,
+  group = Donors,
+  color = Donors
+)) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  geom_point(size = 2.8, alpha = 0.9) +
+  scale_y_continuous(labels = scales::percent) +
+  # Use a colorblind-friendly palette with distinct colors
+  scale_color_brewer(palette = "Set1", name = "Donor") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Donor Proportion Across BEC Clusters",
+    x = "Cluster",
+    y = "Proportion (%)"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+p
+#save the plot
+ggsave(filename = "output/temp/Proportion_donor_per_BEC_cluster.png", plot = p, height = 8, width = 10)
+```
 
-#8-Correlation of cluster gene expression based on marker genes only. -AverageExpression (using only the marker genes for all clusters)
 
+#9-1 the AverageExpression with markers genes(within clusters)
 
-#8-1 the AverageExpression with markers genes(within clusters)
 ```{r}
 #1-EXTRACT THE MARKER GENES#####
 library(openxlsx)
@@ -374,7 +365,7 @@ dim(avr_exp_matrix)
 
 
 
-#8-1-1 PLOT
+#9-1PLOT
 ```{r}
 #plot
 library(pheatmap)
@@ -386,6 +377,7 @@ p=pheatmap(
   main = "Average Expression of Marker Genes per BEC_Cluster"
 )
 p
+#save the plot 
 ggsave(
   filename = "output/temp/avr_Bec.png",
   plot = p,
@@ -396,9 +388,7 @@ ggsave(
 
 
 
-
-
-#8-2 THE CORRELATION 
+#10 THE CORRELATION 
 ```{r}
 #1-correlation between clusters
 #need numeric matrix
@@ -408,7 +398,7 @@ cluster_cor = cor(avr_exp_matrix,method = "spearman") # or spearman
 ```
 
 
-#8-2-2 PLOT
+#10-1 PLOT
 ```{r}
 #plots
 p=pheatmap(
@@ -428,11 +418,12 @@ ggsave(file ="output/temp/cor_bec.png", plot = p, width = 10, height = 8, dpi = 
 
 
 
-#9-ANNOTATION:USE THE CORRELATION AND THE DOTPLOT TO DO THE ANNOTATION
+#11-ANNOTATION:BASED ON THE KEYS MARKERS FROM THE PAPERS AND ALSO THE CORRELATION 
 ```{r}
 #BASED ON THE EXPRESSION OF MARKERS FROM #5 and the CORRELATION LETS ANNOTATE
 new_ann = c(
-  "0"="vBEC", "1"="cBEC", "2"="vBEC", "3"="aBEC", "4"="cBEC", "5"="aBEC", "6"="cBEC", "7"="cBEC", "8"="cBEC", "9"="cBEC", "10"="aBEC", "11"="aBEC", "12"="aBEC", "13"="aBEC", "14"="vBEC", "15"="aBEC"
+  "0"="Activated-HEV", "1"="Capillary", "2"="Venous", "3"="Arterioles", "4"="Transitional-and-Activated-HEV", "5"="Large-Arteries", "6"="Transitional-and-Activated-HEV", "7"="Capillary", "8"="Transitional-and-Activated-HEV", "9"="Transitional-and-Activated-HEV",
+  "10"="Large-Arteries", "11"="Venous", "12"="Transitional-and-Activated-HEV", "13"="tips", "14"="CXCL10-HEV", "15"="Venous"
 )
 
 #Save the cell type labels in metadata
@@ -455,39 +446,211 @@ plt = DimPlot(
 ) 
 plt
 
-ggsave(
-  filename = "output/temp/bec_annotation_umap.png",
-  plot = plt,
-  width = 10,
-  height = 8
-)
+
 ```
 
-#9-2
+# WE HAVE THREE POPULATIONS OF BEC: CAPILLARY, ARTILLARY AND VENOUS  AND EACH OF THEM HAS DIFFERENT SUBPOPULATION. SO WE MAKE PLOT COLORED BASED ON THESE THREE.
+
+#STEP1
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+# Extract UMAP coordinates
+umap_coords <- Embeddings(bec_obj, "umap.harmony")  # adjust if your reduction is different
+colnames(umap_coords) <- c("UMAP1", "UMAP2")        # make sure column names are standard
+
+# Combine with metadata
+plot_df <- bec_obj@meta.data %>%
+  cbind(umap_coords)
+
+# Check
+head(plot_df)
+
+
+```
+
+
+
+#STEP2
+```{r}
+
+
+  # Define families
+arterial  <- c("Large-Arteries", "Arterioles")
+capillary <- c("Capillary" , "Transitional-and-Activated-HEV" , "tips")
+venous    <- c("Venous", "Activated-HEV", "CXCL10-HEV")
+
+# Assign major_type
+plot_df$major_type <- dplyr::case_when(
+  plot_df$new_ann %in% arterial  ~ "Arterial",
+  plot_df$new_ann %in% capillary ~ "Capillary",
+  plot_df$new_ann %in% venous    ~ "Venous",
+  TRUE                            ~ "Other"
+)
+
+# Convert to factor with specific order
+plot_df$major_type <- factor(plot_df$major_type, levels = c("Arterial", "Capillary", "Venous", "Other"))
+
+# Check counts
+table(plot_df$major_type)
+
+```
+
+
+
+#STEP3
+```{r}
+
+subtypes <- unique(plot_df$new_ann)
+
+centroids <- data.frame(
+  new_ann = subtypes,
+  UMAP1 = sapply(subtypes, function(x) median(plot_df$UMAP1[plot_df$new_ann == x], na.rm = TRUE)),
+  UMAP2 = sapply(subtypes, function(x) median(plot_df$UMAP2[plot_df$new_ann == x], na.rm = TRUE))
+)
+
+# Add major_type to centroids
+centroids$major_type <- sapply(centroids$new_ann, function(x) plot_df$major_type[plot_df$new_ann == x][1])
+centroids$major_type <- factor(centroids$major_type, levels = c("Arterial","Capillary","Venous","Other"))
+
+# Check
+centroids
+
+
+
+```
+
+
+#STEP4
+```{r}
+# look for colors 
+major_colors <- c(
+  "Arterial"  = "#D55E00",
+  "Capillary" = "#0072B2",
+  "Venous"    = "#009E73",
+  "Other"     = "grey80"
+)
+
+
+```
+
+
+
+#STEP5
+```{r}
+#THE plot
+p=ggplot(plot_df, aes(x = UMAP1, y = UMAP2, color = major_type)) +
+  geom_point(size = 0.5, alpha = 0.6) +       # plot all cells
+  geom_text_repel(
+    data = centroids,
+    aes(x = UMAP1, y = UMAP2, label = new_ann),
+    size = 4,
+    color = "black",
+    max.overlaps = Inf
+  ) +
+  labs(color = "BEC Major Type", title = "CellType in Blood Endothelial Cells") +
+  theme_classic() +
+  scale_color_manual(values = major_colors) + # color by major type
+  theme(
+    legend.key.size = unit(1.8, "lines"),   # increase the size of the colored boxes
+    legend.text = element_text(size = 20)   # increase the text labels
+  )
+   
+  
+p
+#save 
+ggsave(filename = "output/temp/BecCellType.png", plot= p, width = 10, height = 8)
+
+```
+
+
+
+
+#12 FINALLY WE HAVE THE CLUSTERS NAME , SO WE CAN HAVE THE DIMPLOT .
 ```{r,fig.width=10, fig.height=8}
-bec_markers <- c("IGFBP3", "SSUH2", "S100A4", "INSR", "EDNRB", "KDR", "PGF", "CXCR4", "LY6H", "HSPA1A", "CDKN1A", "HES1", "G0S2","CH25H", "CXCL10", "CXCL11", "CXCL9", "CLU", "IL6","GJA4", "SEMA3G", "HEY1", "ACE",  "CA4", "RGCC", "CD36", "PLVAP", "CD300LG", "ACKR1", "MADCAM1", "SELE", "SELP", "VCAM1")
-p=DotPlot(bec_obj, features = bec_markers, cols = c("lightgrey", "darkgreen"), group.by = "new_ann") +
-  RotatedAxis() + ggtitle("Expression of Known BEC Markers Across Clusters")
+library(Seurat)
+library(ggplot2)
+
+# Define your marker genes
+bec_markers = c(
+  "IGFBP3", "SSUH2", "S100A4", "INSR", "EDNRB", "KDR", "PGF", 
+  "CXCR4", "LY6H", "HSPA1A", "CDKN1A", "HES1", "G0S2", "CH25H", 
+  "CXCL10", "CXCL11", "CXCL9", "CLU", "IL6", 
+  "GJA4", "SEMA3G", "HEY1", "ACE", "CA4", "RGCC", "CD36", 
+  "PLVAP", "CD300LG", "ACKR1", "MADCAM1", "SELE", "SELP", "VCAM1"
+)
+
+# Make sure 'new_ann' is a factor (so clusters are ordered properly)
+# Optional: reorder if you want a specific grouping
+bec_obj$new_ann <- factor(bec_obj$new_ann, levels = unique(bec_obj$new_ann))
+
+# For example, ordering manually to group similar clusters together
+desired_order = c("Large-Arteries", "Arterioles","Capillary","Transitional-and-Activated-HEV","tips", "Venous",  "CXCL10-HEV","Activated-HEV")
+bec_obj$new_ann = factor(bec_obj$new_ann, levels = desired_order)
+
+
+# Create the dot plot
+p <- DotPlot(
+  object = bec_obj,
+  features = bec_markers,
+  cols = c("lightgrey", "darkgreen"),
+  group.by = "new_ann"
+) +
+  RotatedAxis() +
+  ggtitle("Expression of Known BEC Markers Across Clusters") +
+  theme(
+    axis.text.y = element_text(size = 20),  # increase y-axis text
+    axis.text.x = element_text(size = 11)   # optional: increase x-axis text
+  )
+p
+
+#save
+ggsave(filename = "output/temp/BecMarker.png", plot= p, width = 12, height = 8)
+
+```
+
+
+
+
+#feature plot:optional
+```{r}
+#the markers
+bec_markers = c("GJA4","RGCC","ACKR1")
+
+#Combine markers into a “module score” to get ONE clean plot
+bec_obj <- AddModuleScore(
+  object = bec_obj,
+  features = list(bec_markers),
+  name = "BECScore"
+)
+#plot
+p=FeaturePlot(
+  bec_obj,
+  features = "BECScore1",
+  reduction = "umap.harmony",
+  cols = c("lightgrey", "red")
+) + 
+  ggtitle("Combined BEC Marker Score (GJA4(artillary), RGCC(capillary), ACKR1(venous))")
 p
 #save
-ggsave(filename = "output/temp/bec_cluster_dot_plot.png", plot = p, width = 10, height = 8)
+#ggsave(filename = "output/temp/BecMarker_feature.png", plot= p, width = 10, height = 8)
+
 ```
-
-
 
 
 
 
 ```{r}
 ##save the file and open a new script to remove and keep this to always have the scripts.
-
-
-saveRDS(bec_obj,file = "data/process/temp/bec_obj.RDS")
+#saveRDS(bec_obj,file = "data/process/temp/bec_obj.RDS")
 
 ## run it later to load all 
-#bec_obj = readRDS("data/process/temp/bec_obj.RDS")
+bec_obj = readRDS("data/process/temp/bec_obj.RDS")
 #recommanded
-bec_obj <- UpdateSeuratObject(bec_obj)
+#bec_obj <- UpdateSeuratObject(bec_obj)
 ```
 
 
