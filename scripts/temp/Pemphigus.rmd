@@ -1,0 +1,101 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+## ANALYSIS OF Pemphigus data###########
+
+#FOR THE DIRECTORY
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+# add this:
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+set.seed(123)
+
+```
+
+
+
+
+
+#LOAD THE PACKAGES  AFTER INTALLATIONS 
+```{r}
+library(pacman)
+p_load(
+  Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel
+)
+
+```
+
+
+ 
+
+#1-LOAD THE DATA
+```{r}
+TLS9 = Read10X("data/raw/temp/P_TLS/dat/TLS9")
+TLS10 = Read10X("data/raw/temp/P_TLS/dat/TLS10")
+TLS11 = Read10X("data/raw/temp/P_TLS/dat/TLS11")
+TLS12 = Read10X("data/raw/temp/P_TLS/dat/TLS12")
+```
+
+
+#2-CREATE A SEURAT OBJ FOR ALL
+```{r}
+## seurat
+TLS9_obj = CreateSeuratObject( counts = TLS9, project =  "TLS9")
+TLS10_obj = CreateSeuratObject( counts = TLS9, project =  "TLS10")
+TLS11_obj = CreateSeuratObject( counts = TLS9, project =  "TLS11")
+TLS12_obj = CreateSeuratObject( counts = TLS9, project =  "TLS12")
+
+```
+
+
+#3-MERGE ALL INTO ONE SEURAT OBJ
+```{r}
+##merge
+Pem_obj = merge(
+  TLS9_obj,
+  y = c(TLS10_obj, TLS11_obj, TLS12_obj),
+  add.cell.ids = c("TLS9","TLS10","TLS11","TLS12"),
+  project = "Pem_obj"
+)
+
+#to see if i have duplicate or not : should see false 
+any(duplicated(colnames(TLS_obj)))
+
+#to delete and save memory
+rm(TLS9,TLS10,TLS11,TLS12,TLS9_obj,TLS10_obj,TLS11_obj,TLS12_obj)
+gc(reset = TRUE)
+
+```
+
+
+```{r}
+
+```
+
+
+#TO SAVE 
+```{r}
+##save the file and open a new script to remove and keep this to always have the scripts.
+saveRDS(Pem_obj, file = "data/process/temp/Pem_obj.RDS")
+
+## run it later to load all 
+#Pem_obj = readRDS("data/process/temp/Pem_obj.RDS")
+```
+
+
+
+
+
+
+
+
+
+
+
+

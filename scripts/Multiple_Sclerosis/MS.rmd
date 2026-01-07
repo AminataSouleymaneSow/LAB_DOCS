@@ -1,0 +1,370 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#####ANALAYSIS OF MULTICLEROSIS DATA#############
+
+
+
+###LOAD THE PACKAGES 
+
+```{r setup, include=FALSE}
+##################PACKAGES
+library(pacman)
+  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+set.seed()
+```
+
+
+
+#####STEP_1
+
+###1-LOAD THE DATA
+
+```{r}
+#######load data
+MS = read.csv("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Multiple Sclerosis/GSE180759_expression_matrix.csv/GSE180759_expression_matrix.csv")
+
+```
+
+
+###2-CREATE SEURAT_OBJ
+
+```{r}
+##convert to matrix using sparse matrix that store non zero_values
+MS_matrix  = as ( MS, "sparseMatrix")
+
+##seurat_obj
+MS_obj = CreateSeuratObject(MS_matrix, project = "MS")
+##save the raw_file 
+saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
+
+```
+
+
+####STEP_2:PROCESS AND ANALYSE THE RAW_FILE
+
+###1-FOR THE QC
+
+```{r, fig.width=10, fig.height=8}
+#####
+getwd()
+MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
+## THE QC for the cutoff to use
+MS_obj[["percent.mt"]] = PercentageFeatureSet(MS_obj ,pattern = "^MT-")
+VlnPlot(MS_obj, features = c("nFeature_RNA","nCount_RNA", "percent.mt"),ncol = 3, log = TRUE)
+
+### to detect abnormal cells 
+plot1=FeatureScatter(MS_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 = FeatureScatter(MS_obj,feature1 = "nCount_RNA" , feature2 = "nFeature_RNA")
+plot1 + plot2
+ElbowPlot(MS_obj ,ndims = 50, reduction = "pca")
+```
+
+###2-Statistics
+
+```{r}
+#Normalize,fvf,pca,scale
+MS_obj=NormalizeData(MS_obj)
+MS_obj=FindVariableFeatures(MS_obj)
+MS_obj=ScaleData(MS_obj, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = MS_obj))
+MS_obj=RunPCA(MS_obj,features = VariableFeatures(object = MS_obj))
+MS_obj=RunUMAP(MS_obj,dims = 1:30)
+p=DimPlot(MS_obj, reduction = "umap",label = TRUE)
+ggsave(filename = "output/Multiple_Sclerosis/MSUmap.png", plot=p, width = 12, height = 8)
+
+#ELBOW_plot for the threshol of the clusters and neighboor
+ElbowPlot(MS_obj,ndims = 50, reduction = "pca")
+
+#for the resolution
+MS_obj=FindNeighbors(MS_obj,dims = 1:30)
+for (res in seq(0.2, 1, by = 0.1)) {
+  MS_obj <- FindClusters(MS_obj, resolution = res)
+  colname <- paste0("res_", res)
+  MS_obj[[colname]] <- MS_obj$seurat_clusters
+}
+res_cols <- grep("^res_", colnames(MS_obj@meta.data), value = TRUE)
+for (res in res_cols) {
+  p <- DimPlot(MS_obj, group.by = res, label = TRUE, reduction = "umap") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+  readline(prompt="Press [Enter] to see the next resolution...")
+}
+
+#save 
+p_res03=DimPlot(MS_obj,group.by = "res_0.3",label = TRUE,reduction = "umap" )+ ggtitle("Resolution: 0.3")
+ggsave(filename = "output/Multiple_Sclerosis/MSresolution.png",plot = p_res03,width = 12,height = 8,dpi = 300)
+
+```
+
+
+
+
+###3-clusters and find all markers
+```{r}
+##cluster......
+MS_obj=FindNeighbors(MS_obj,reduction ="pca",dims = 1:30)
+MS_obj=FindClusters(MS_obj, resolution = 0.3)
+##markers, apply the filtering and save
+MS_markers=FindAllMarkers(MS_obj,only.pos = TRUE,min.pct = 0.25,logfc.threshold = 0.25)
+MS_markers=MS_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+write.xlsx(MS_markers,file = "output/Multiple_Sclerosis/MS_markers.xlsx")
+
+```
+
+###4-Annotation based on markers genes
+
+```{r, fig.width=12, fig.height=8}
+##-------------------
+#1-celltype
+Idents(MS_obj)="seurat_clusters"
+cluster_name = c(
+  "0"="Oligodendrocytes",
+  "1"="Oligodendrocytes",
+  "2"="Oligodendrocytes",
+  "3"="Oligodendrocytes",
+  "4"="Oligodendrocytes",
+  "5"="Astrocytes",
+  "6"="Microgalia",
+  "7"="Oligodendrocytes",
+  "8"="OPC",
+  "9"="Neurons",
+  "10"="Monocytes/DC",
+  "11"="Vascular Cells",
+  "12"="Astrocytes"
+  ,"13"="Astrocytes",
+  "14"="Neurons",
+  "15"="Neurons",
+  "16"="Astrocytes",
+  "17"="Microgalia",
+  "18"="Pericytes",
+  "19"="Oligodendrocytes"
+  )
+MS_obj=RenameIdents(MS_obj, cluster_name)
+MS_obj$celltype=Idents(MS_obj)
+
+##2
+##change cluster_name
+celltype_cols=c(
+  "Oligodendrocytes"      = "#E41A1C",
+  "Astrocytes"            = "#4B2EFF",
+  "Microgalia"            = "#E6F04A",
+  "OPC"                   = "#E7298A",
+  "Neurons"               = "#66E5B4",
+  "Monocytes/DC"           ="#550000",
+  "Pericytes"             = "#0093CC",            
+  "Vascular cells"        = "#E67E22"
+
+)
+##3 center
+umap_df=as.data.frame(Embeddings(MS_obj, "umap"))
+umap_df$celltype=MS_obj$celltype
+centers <- aggregate(
+  cbind(umap_1, umap_2) ~ celltype,
+  data = umap_df,
+  FUN = median
+)
+##plot
+library(ggrepel)
+fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umap_1, y = umap_2, label = celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 4,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "umap 1", y = "umap 2")
+fig1a
+ggsave(filename = "output/Multiple_Sclerosis/MScellT.png", plot = fig1a, width = 12, height = 8)
+
+```
+
+
+
+
+```{r,fig.width=10,fig.height=8}
+
+##plots with the markers 
+##marker used to make gice cellname
+genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
+
+p=DotPlot(
+  MS_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+ggsave(filename = "output/Multiple_Sclerosis/MSmarkers.png", plot = p, width = 12, height = 8)
+
+
+
+```
+
+
+
+
+###5-proportion
+```{r}
+###-------cell proportion
+
+ prop_df=MS_obj@meta.data |>
+  as_tibble() |>
+  dplyr::count(celltype) |>
+  dplyr::mutate(
+    proportion = n / sum(n),
+    percent = proportion * 100
+  )
+
+prop_df$celltype=factor(
+  prop_df$celltype,
+  levels = prop_df$celltype[order(prop_df$proportion, decreasing = TRUE)]
+)
+
+fig1c = ggplot(prop_df, aes(x = celltype, y = proportion, fill = celltype)) +
+  geom_col(width = 0.8) +
+  geom_text(
+    aes(label = paste0(round(percent, 1), "%")),
+    vjust = -0.3,
+    size = 3
+  ) +
+  scale_fill_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Cell proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/Multiple_Sclerosis/MSproportion.png", plot = fig1c, width = 12, height = 8)
+
+```
+
+
+```{r}
+##correlation between celltype
+#1 Set identities to cell types
+Idents(MS_obj) = "celltype"
+
+#to see cellname
+levels(Idents(MS_obj))
+
+
+#2 Identify highly variable genes
+MS_obj = FindVariableFeatures(MS_obj, nfeatures = 10000)
+hvg = VariableFeatures(MS_obj)[1:5000]
+
+#3 Average expression using HVGs
+av_expMS = AverageExpression(
+  MS_obj,
+  features = hvg,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+
+#4 Cell-type correlation matrix (Spearman)
+correlation_matrix <- cor(
+  as.matrix(av_expMS),
+  method = "spearman",
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrix[is.na(correlation_matrix)] = 0
+
+#5 Save 
+png(
+  filename = "output/Multiple_Sclerosis/MS_celltype_corr.png",
+  width = 3000,
+  height = 2400,
+  res = 300
+)
+library(pheatmap)
+colors=colorRampPalette(c("#2166AC", "white", "#B2182B"))(100)
+pheatmap(
+  correlation_matrix,
+  clustering_method = "ward.D2",
+  color = colors,
+  fontsize_row = 9,
+  fontsize_col = 9
+)
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+###-Save the clean meta.data wtih all the final information
+```{r}
+#create a file with the raw_count,processed, the metadata and the active_id
+##check the information
+levels(MS_obj)
+table(Idents(MS_obj))
+head(MS_obj@meta.data$celltype)
+colnames(MS_obj@meta.data)
+# Remove column i don't want to keep
+cols_to_remove <- c(
+  grep("res_|RNA_snn_res", colnames(MS_obj@meta.data), value = TRUE),
+  "cell_type"
+)
+MS_obj@meta.data <- MS_obj@meta.data[, !(colnames(MS_obj@meta.data) %in% cols_to_remove)]
+###
+MS_obj$celltype = Idents(MS_obj)
+Idents(MS_obj)=MS_obj$celltype
+saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_Final.rds")
+MS_obj= readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_Final.rds")
+# Optional CSV 
+write.csv(MS_obj@meta.data, 
+          file = "data/process/SeuratObjects/Multiple_Sclerosis//MS_Final.csv",
+          row.names = TRUE)
+View(MS_obj@meta.data)
+
+```
+
+
+###Save the process
+```{r}
+###save
+#saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+
+## run it later to load all 
+#MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+```
+
+
+
+
+
+
+

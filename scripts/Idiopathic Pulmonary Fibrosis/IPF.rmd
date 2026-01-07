@@ -1,0 +1,1107 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+############################################################################################################################
+###ANALYSIS OF IDIOPATIC PULMONARY FIBROSIS#############################################################################
+##############################################################################################################################
+
+#THE PACKAGES
+```{r setup, include=FALSE}
+##################PACKAGES
+library(pacman)
+  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,hdf5r,DropletUtils,harmony)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+set.seed(123)
+
+```
+
+#####STEP_1
+###load the data
+```{r}
+#data for the Lower lung(L) and Upper(U)
+library(Seurat)
+library(DropletUtils)
+
+data.dir="../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Idiopathic Pulmonary Fibrosis/GSE128033_RAW"
+
+# List all sample folders
+sample.dirs=list.dirs(data.dir, recursive = FALSE)
+
+for (folder_path in sample.dirs) {
+  folder_name=basename(folder_path)  
+  message("Processing ", folder_name)
+  counts=Read10X(data.dir = folder_path)
+  # Droplet filtering
+  iscell_dd=defaultDrops(counts, expected = 5000)
+  eout=emptyDrops(counts, lower = 200)
+  eout$FDR[is.na(eout$FDR)] <- 1
+  iscell_ed=eout$FDR <= 0.01
+  # Metadata
+  meta=data.frame(
+    iscell_dd = iscell_dd,
+    iscell_ed = iscell_ed,
+    row.names = colnames(counts)
+  )
+  # Keep droplets
+  keep=iscell_dd | iscell_ed
+  
+  # Create Seurat object
+  IPF=CreateSeuratObject(
+    counts = counts[, keep],
+    meta.data = meta[keep, ],
+    project = folder_name
+  )
+  # Add sample ID
+  IPF$sample=folder_name
+  # Save
+  saveRDS(IPF, file = paste0("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/", folder_name, ".rds"))
+}
+#merge in two seurat Upper and Lung
+save.base="data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis"
+
+groups=list(
+  L = c("1L1","1L2","2L1","2L2","3L"),
+  U = c("1U","2U","3U")
+)
+for (grp in names(groups)) {
+  folders=groups[[grp]]
+  
+  seurat_list=lapply(folders, function(folder_name) {
+    # Correct path: point to Lower or Upper subfolder
+    subfolder=ifelse(grp == "L", "Lower", "Upper")
+    file_path=file.path(save.base, subfolder, paste0(folder_name, ".rds"))
+    message("Loading ", file_path)
+    readRDS(file_path)
+  })
+  names(seurat_list)=folders
+  
+  # Merge all Seurat objects in the group
+  if (length(seurat_list) > 1) {
+    combined=Reduce(function(x, y) merge(x, y), seurat_list)
+  } else {
+    combined=seurat_list[[1]]
+  }
+  
+  # Save merged 
+  save_dir=file.path(save.base, ifelse(grp == "L", "Lower", "Upper"))
+  saveRDS(combined, file = file.path(save_dir, paste0("IPF_", grp, ".rds")))
+  message("Saved merged Seurat object: IPF_", grp, " in ", save_dir)
+}
+rm(IPF.Up)
+gc(full = TRUE)
+```
+
+
+
+###STEP_2: process and analyse the IPF_Upper
+
+###1-qc and threshold
+```{r,fig.width=10,fig.height=8}
+##qc
+IPF.U=readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_U.rds")
+IPF.U[["percent.mt"]]=PercentageFeatureSet(IPF.U,pattern = "^MT-")
+Idents(IPF.U)="IPF_Upper"
+VlnPlot(IPF.U, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE)
+#threshold
+IPF.U=subset(IPF.U, subset=nFeature_RNA>200 & nFeature_RNA<7000 & percent.mt <10)
+
+```
+
+
+###2-statistics
+```{r}
+###
+IPF.U=NormalizeData(IPF.U)
+IPF.U=FindVariableFeatures(IPF.U)
+IPF.U=ScaleData(IPF.U,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = IPF.U))
+IPF.U=RunPCA(IPF.U, features = VariableFeatures(object = IPF.U))
+ElbowPlot(IPF.U)
+IPF.U=RunUMAP(IPF.U, dims = 1:20)
+P=DimPlot(IPF.U,reduction = "umap", label = TRUE)
+
+```
+
+###3-integration
+
+```{r}
+##integration
+library(harmony)
+IPF.U=RunHarmony(IPF.U,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:20  )
+IPF.U[["RNA"]]=JoinLayers(IPF.U[["RNA"]])
+IPF.U = RunUMAP(IPF.U, reduction = "harmony", dims= 1:20, reduction.name = "umap.harmony")
+p=DimPlot(IPF.U,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPF.integration.png", plot=p, width = 12, height = 8)
+
+#for the resolution
+IPF.U=FindNeighbors(IPF.U,reduction = "harmony",dims = 1:20)
+for (res in seq(0.2, 1, by = 0.1)) {
+  IPF.U=FindClusters(IPF.U, resolution = res)
+  colname=paste0("res_", res)
+  IPF.U[[colname]]=IPF.U$seurat_clusters
+}
+res_cols=grep("^res_", colnames(IPF.U@meta.data), value = TRUE)
+for (res in res_cols) {
+  p=DimPlot(IPF.U, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+  readline(prompt="Press [Enter] to see the next resolution...")
+}
+##save
+p_res05=DimPlot(IPF.U,group.by = "res_0.5",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.5")
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPF.U_resolution_0.5.png",plot = p_res05,width = 12,height = 8,dpi = 300)
+
+```
+
+
+
+###4-cluster and markers
+```{r}
+###clusters
+
+IPF.U=FindNeighbors(IPF.U,reduction = "harmony",dims = 1:20)
+IPF.U=FindClusters(IPF.U, resolution = 0.5,cluster.name = "harmony_clusters")
+#markers
+IPF.Umarkers=FindAllMarkers(IPF.U,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
+IPF.Umarkers = IPF.Umarkers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+write.xlsx(IPF.Umarkers,file = "output/Idiopathic Pulmonary Fibrosis/Upper/IPF.Umarkers.xlsx")
+View(IPF.Umarkers)
+
+##the average and correlation 
+av.expIPF=AverageExpression(IPF.U)$RNA
+correlation_matrixIPF=cor(as.matrix(av.expIPF), 
+                          as.matrix(av.expIPF))
+library(pheatmap)
+pheatmap(correlation_matrixIPF,
+         clustering_method = "ward.D2",
+         main = "Correlation between Cluster Groups",
+         filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPF_corr.png",
+         fontsize_row = 8,
+         fontsize_col = 8)
+```
+
+
+
+###5-annotation
+"AIF1","PTPRC" : myeloid 
+"FABP4","SPP1","FCGR1A","INHBA":macrophages x
+"FCN1", "IL1B", "CD14":monocyte. x
+"FCER1A": dendritic
+"TPSAB1", "CPA3", "MS4A2":mast cells x
+"CD3E":lymphoid
+"CD3D", "CD8A", "CD8B":cytotoxic T    x
+"CCR7", "LEF1":helper T more or less
+Treg:"FOXP3"
+Narural killer:"NKG7", "KLRF1"  x
+"MS4A1", "CD79A":Blymphocyte    x
+ CD79A: plasma
+ "NRP1", "IL3RA":Plasmacytoid Dendritic more or less
+ "EPCAM": epithelial
+ Alveolar Type 1:"PDPN"
+ Alveolar Type 2:"SFTPC", "SFTPD", "MUC1" x
+ Basal:"KRT15", "KRT17"
+ Aberrant Basaloid:"COL1A1","FN1"
+ Ciliated : "RSPH1", "CAPS", "FOXJ1"   x 
+ Club :SCGB3A2
+ Goblet :"MUC5B", "SCGB1A1"            x
+ Secretory :"SCGB1A1", "MUC5B"
+ Endothelial :"VWF", "PECAM1", "CLDN5"
+ Arterial Endothelial :"GJA5","DKK2"
+ Capillary Endothelial :"FCN3", "SEMA3G", more or less
+ Peribronchial Endothelial:"PLVAP","MPZL2", "POSTN" 
+ Venous Endothelial :"ACKR1", "SELE"      x
+ Lymphatic Endothelial :"CCL21", "PROX1" x
+ Fibroblast :"LUM","COL1A2"
+ Myofibroblast :"POSTN", "CTHRC1"
+Smooth Muscle:"DES", "ACTA2", "MYH11"
+Pericyte :"PDGFRB", "RGS5", "FAM162B" 
+Mesothelial :"MSLN","UPK3B"
+Proliferating Cells :"TOP2A", "BIRC5", "UBE2C", "MKI67" X
+
+```{r,fig.width=12, fig.height=8}
+
+genes=c("AIF1","PTPRC","FABP4","SPP1","FCGR1A","INHBA","FCN1", "IL1B", "CD14","FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD3D", "CD8A", "CD8B","CCR7", "LEF1","FOXP3","NKG7", "KLRF1","MS4A1", "CD79A","NRP1", "IL3RA","EPCAM","PDPN","SFTPC", "SFTPD", "MUC1","KRT15", "KRT17","COL1A1","FN1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "VWF", "PECAM1", "CLDN5","GJA5","DKK2","FCN3", "SEMA3G","PLVAP","MPZL2","POSTN" ,"ACKR1", "SELE","CCL21", "PROX1","LUM","COL1A2","CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "FAM162B" ,"MSLN","UPK3B","TOP2A", "BIRC5", "UBE2C")
+
+
+##1celltype
+Idents(IPF.U)="harmony_clusters"
+cluster_name=c(
+  "0"  = "Macrophages"                  ,
+  "1"  = "Macrophages"                   ,
+  "2"  = "Cytotoxic T"                   ,
+  "3"  = "Venous Endothelial"            ,
+  "4"  = "Monocytes"                     ,
+  "5"  = "NK cells"                       ,
+  "6"  = "B Lymphocytes"                    ,
+  "7"  = "Arterial Endothelial"            ,
+  "8"  = "Goblet"                          ,
+  "9"  = "Fibroblasts"                     ,
+  "10" = "Aveolar Type 2"                  ,          
+  "11" = "Mast cells"                      ,
+  "12" = "Macrophages"                     ,
+  "13" = "Smooth Muscle cells"             ,
+  "14" = "Proliferating cells"             ,
+  "15" = "Aveolar Type 2"                  ,
+  "16" = "Lymphatic Endothelial"          ,
+  "17" = "Ciliated"      
+  
+)
+
+IPF.U=RenameIdents(IPF.U, cluster_name)
+IPF.U$celltype=Idents(IPF.U)
+##2color
+celltype_cols <- c(
+  "Macrophages"           = "#6A3D9A",  # strong red
+  "Monocytes"             = "#66C2A5", # orange
+  "Mast cells"            = "#FFD92F",  # yellow
+  "NK cells"              = "#4DAF4A",  # green
+  "Cytotoxic T"           = "#377EB8",  # blue
+  "B Lymphocytes"         = "#000000",  # black
+  "Fibroblasts"           = "#A65628",  # brown
+  "Smooth Muscle cells"   = "#904EA3",  # purple
+  "Venous Endothelial"    = "#FF7F00",  # teal
+  "Arterial Endothelial"  = "#1B9E77",  # dark green
+  "Lymphatic Endothelial" = "#F781BF",  # light cyan
+  "Goblet"                = "#8DD3C7" ,# pink
+  "Aveolar Type 2"        = "#E41A1C",  # dark violet
+  "Ciliated"              = "#B15928",  # rust
+  "Proliferating cells"   = "#999999"   # grey
+)
+
+
+##3 center
+umap_df=as.data.frame(Embeddings(IPF.U, "umap"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=IPF.U$celltype
+centers=aggregate(
+  cbind(umap_1, umap_2) ~ celltype,
+  data = umap_df,
+  FUN = median
+)
+
+##supp duplicate and plot
+library(ggrepel)
+suppressWarnings({
+  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+    geom_point(size = 0.3) +
+    scale_color_manual(values = celltype_cols) +
+    geom_label_repel(
+      data = centers,
+      aes(x = umap_1, y = umap_2, label = celltype),
+      inherit.aes = FALSE,
+      fill = "white",
+      color = "black",
+      size = 4,
+      box.padding = 0.4,
+      label.size = 0.25,
+      segment.color = NA,
+      max.overlaps = Inf
+    ) +
+    theme_classic() +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(x = "umap 1", y = "umap 2")
+})
+fig1a
+ggsave(ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFcellT.png", plot = fig1a, width = 20, height = 10))
+
+```
+
+
+```{r,fig.width=20,fig.height=8}
+###with the markers
+p=DotPlot(
+  IPF.U,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "celltype") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFmarkers.png", plot = p, width = 20, height = 10)
+
+```
+
+
+```{r, fig.width=12,fig.height=8}
+###with the markers another plot type
+
+
+# Create DotPlot but prevent automatic flipping
+p1=DotPlot(IPF.U, features = genes, assay = "RNA") + 
+  labs(x = "Genes", y = "Cell types") +
+  scale_color_gradientn(colours = c('#330066','#336699','#66CC66','#FFCC33')) +
+  guides(size = guide_legend("Percent Expression")) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10)
+  )
+p1=p1 + aes(x = features.plot, y = id)  # 'id' = cell type, 'features.plot' = gene
+p1
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFmarkers2.png", plot = p1, width = 20, height = 10)
+
+
+```
+
+
+
+```{r, fig.width=12,fig.height=8}
+
+###complex heatmap
+IPF.U$celltype=mapvalues(as.character(Idents(IPF.U)), names(cluster_name), cluster_name)
+Idents(IPF.U)="celltype"
+
+# 3️⃣ Extract expression data
+DefaultAssay(IPF.U)="RNA"
+expr_mat=GetAssayData(IPF.U, layer = "data")
+
+# Percent of cells expressing each gene per cell type
+percent_mat=sapply(levels(Idents(IPF.U)), function(ct) {
+  cells=WhichCells(IPF.U, idents = ct)
+  Matrix::rowMeans(expr_mat[genes, cells] > 0) * 100
+})
+# Average expression per cell type
+avg_exp=AverageExpression(IPF.U, features = genes, assays = "RNA", layer = "data",
+                             return.seurat = FALSE)$RNA
+exp_mat=avg_exp[genes, colnames(percent_mat)]
+
+# Convert to matrix
+exp_mat=as.matrix(exp_mat)
+percent_mat=as.matrix(percent_mat)
+
+# 4️⃣ Flashy color function
+
+col_fun=colorRamp2(c(min(exp_mat), 0, max(exp_mat)), c("navy", "yellow", "yellow"))
+
+# 5️⃣ Dot drawing function
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  if (!is.na(exp_mat[i, j])) {
+    grid.circle(
+      x = x, y = y,
+      r = (percent_mat[i, j] / 100) * 0.45 * min(unit.c(w, h)),  
+      gp = gpar(fill = col_fun(exp_mat[i, j]), col = "black")    
+    )
+  }
+}
+
+# 6️⃣ Top annotation using your cell types
+celltypes=colnames(percent_mat)            
+unique_celltypes=unique(celltypes)
+palette_colors=viridis(length(unique_celltypes))  
+
+column_ha=HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = setNames(palette_colors, unique_celltypes)),
+  na_col = "grey"
+)
+
+
+# 7️⃣ Draw heatmap
+
+ht=Heatmap(
+  exp_mat,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = gpar(type = "none"),
+  cell_fun = cell_fun,
+  row_names_gp = gpar(fontsize = 6),
+  column_names_gp = gpar(fontsize = 8, rot = 45, just = "right"),
+  border = TRUE,
+  top_annotation = column_ha,
+  row_km = 4
+)
+
+draw(ht)
+# PNG
+
+ png(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFhmap.png",
+    width = 3100, height = 2200, res = 300)
+ draw(ht)   
+ dev.off()  
+```
+
+
+
+###6-proportion of cells
+```{r}
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(IPF.U@meta.data) %>%
+  dplyr::count(`sample`, celltype) %>%
+  dplyr::group_by(`sample`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+IPF.U_meta <- dplyr::as_tibble(IPF.U@meta.data) %>%
+  dplyr::rename(sample_id = sample)   # rename to avoid conflicts
+prop_df=IPF.U_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFproportion.png", plot = fig1c, width = 12, height = 10)
+```
+
+
+
+
+###7-Proportion of DONORS
+```{r}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+#change colname 
+IPF.U$Donors = IPF.U$sample
+
+#create the meta data
+meta = IPF.U@meta.data[, c("harmony_clusters", "Donors")]
+table(meta$Donors)
+
+# Make sure dplyr functions are used explicitly
+meta = IPF.U@meta.data
+
+#the  percentage 
+donors_counts = meta %>%
+  as_tibble() %>%
+  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
+  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
+```
+
+
+```{r}
+###
+#####
+p=ggplot(donors_counts, aes(
+  x = harmony_clusters,
+  y = proportion,
+  group = Donors,
+  color = Donors
+)) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  geom_point(size = 2.8, alpha = 0.9) +
+  scale_y_continuous(labels = scales::percent) +
+  # Use a colorblind-friendly palette with distinct colors
+  scale_color_brewer(palette = "Set1", name = "Donor") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Donors Proportion ",
+    x = "Cluster",
+    y = "Proportion (%)"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+p
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFDonor.png", plot = p, width = 12, height = 8)
+```
+
+
+
+```{r}
+##correlation with the celltype
+# 1️⃣ Set identities to cell types
+Idents(IPF.U) <- "celltype"
+
+# sanity check
+levels(Idents(IPF.U))
+# should show cell type names
+
+# 2️⃣ Average expression per cell type
+av.expIPF <- AverageExpression(
+  IPF.U,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+
+# 3️⃣ Cell-type correlation matrix
+correlation_matrixIPF <- cor(
+  as.matrix(av.expIPF),
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrixIPF[is.na(correlation_matrixIPF)] <- 0
+
+# 4️⃣ Save heatmap as PNG
+png(
+  filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFcelltypecorr.png",
+  width = 3000,
+  height = 2400,
+  res = 300
+)
+
+pheatmap(
+  correlation_matrixIPF,
+  clustering_method = "ward.D2",
+  main = "Correlation Between Cell Types (IPF – Upper Lung)",
+  fontsize_row = 9,
+  fontsize_col = 9
+)
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+###Final meta.data with the cells names
+```{r}
+##save
+# Keep your existing metadata names
+IPF.U$orig.ident="Idiopathic P. Fibrosis in Upper Lung"
+
+# Remove unwanted columns 
+cols_to_remove=c(
+  grep("res_|RNA_snn_res", colnames(IPF.U@meta.data), value = TRUE),
+  "cell_type",
+  "iscell_ed",
+  "iscell_dd"
+)
+IPF.U@meta.data=IPF.U@meta.data[, !(colnames(IPF.U@meta.data) %in% cols_to_remove)]
+
+# Ensure active identity reflects your celltype
+Idents(IPF.U)=IPF.U$celltype
+
+# Save 
+saveRDS(IPF.U, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF.U_Final.rds")
+
+# Save only the final metadata 
+saveRDS(IPF.U@meta.data, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF.U_metadata.rds")
+
+# Optional CSV 
+write.csv(IPF.U@meta.data, 
+          file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF.U_metadata.csv",
+          row.names = TRUE)
+View(IPF.U@meta.data)
+```
+
+
+###save
+```{r}
+##save
+#saveRDS(IPF.U, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+
+## run it later to load all 
+#IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+#####STEP-3 ANALYSIS FOR IPF in LOWER lUNG
+-----------------------------------------------------------------------------------------------------------------------
+
+
+
+###1-qc
+```{r}
+##qc---------
+
+IPF.L=readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF_L.rds")
+IPF.L[["percent.mt"]]=PercentageFeatureSet(IPF.L,pattern = "^MT-")
+Idents(IPF.L)="x"
+IPF.L$x="All"
+VlnPlot(IPF.L, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE)
+#threshold
+IPF.L=subset(IPF.L, subset=nFeature_RNA>200 & nFeature_RNA<7000 & percent.mt <10)
+```
+
+
+####2-statistics
+```{r}
+IPF.L=NormalizeData(IPF.L)
+IPF.L=FindVariableFeatures(IPF.L)
+IPF.L=ScaleData(IPF.L,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = IPF.L))
+IPF.L=RunPCA(IPF.L, features = VariableFeatures(object = IPF.L))
+ElbowPlot(IPF.L)
+#IPF.U=RunUMAP(IPF.U, dims = 1:20)
+#P=DimPlot(IPF.U,reduction = "umap", label = TRUE)
+```
+
+
+###3-integration
+```{r}
+##integration
+library(harmony)
+IPF.L=RunHarmony(IPF.L,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:20  )
+IPF.L[["RNA"]]=JoinLayers(IPF.L[["RNA"]])
+IPF.L = RunUMAP(IPF.L, reduction = "harmony", dims= 1:20, reduction.name = "umap.harmony")
+p=DimPlot(IPF.L,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
+p
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFintegration.png", plot=p, width = 12, height = 8)
+
+#for the resolution
+IPF.L=FindNeighbors(IPF.L,reduction = "harmony",dims = 1:20)
+for (res in seq(0.2, 1, by = 0.1)) {
+  IPF.L=FindClusters(IPF.L, resolution = res)
+  colname=paste0("res_", res)
+  IPF.L[[colname]]=IPF.L$seurat_clusters
+}
+res_cols=grep("^res_", colnames(IPF.L@meta.data), value = TRUE)
+for (res in res_cols) {
+  p=DimPlot(IPF.L, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  
+  print(p)
+  readline(prompt="Press [Enter] to see the next resolution...")
+}
+
+##save
+p=DimPlot(IPF.L,group.by = "res_0.5",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.5")
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPF.L_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
+
+```
+
+
+###4 cluster and markers
+```{r}
+###clusters
+
+IPF.L=FindNeighbors(IPF.L,reduction = "harmony",dims = 1:20)
+IPF.L=FindClusters(IPF.L, resolution = 0.5,cluster.name = "harmony_clusters")
+#markers
+IPF.Lmarkers=FindAllMarkers(IPF.L,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
+IPF.Lmarkers = IPF.Lmarkers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+write.xlsx(IPF.Lmarkers,file = "output/Idiopathic Pulmonary Fibrosis/Low/IPF.Lmarkers.xlsx")
+View(IPF.Lmarkers)
+
+##the average and correlation 
+av.expIPF=AverageExpression(IPF.L)$RNA
+correlation_matrixIPF=cor(as.matrix(av.expIPF), 
+                          as.matrix(av.expIPF))
+library(pheatmap)
+pheatmap(correlation_matrixIPF,
+         clustering_method = "ward.D2",
+         main = "Correlation between Cluster Groups",
+         filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPF_corr.png",
+         fontsize_row = 8,
+         fontsize_col = 8)
+```
+
+
+
+###5-annotation
+
+```{r, fig.width=14, fig.height=8}
+
+##marker------
+
+genes=c("AIF1","PTPRC","FABP4","SPP1","FCGR1A","INHBA","FCN1", "IL1B", "CD14","FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD3D", "CD8A", "CD8B","CCR7", "LEF1","FOXP3","NKG7", "KLRF1","MS4A1", "CD79A","NRP1", "IL3RA","EPCAM","PDPN","SFTPC", "SFTPD", "MUC1","KRT15", "KRT17","COL1A1","FN1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "VWF", "PECAM1", "CLDN5","GJA5","DKK2","FCN3", "SEMA3G","PLVAP","MPZL2","POSTN" ,"ACKR1", "SELE","CCL21", "PROX1","LUM","COL1A2","CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "FAM162B" ,"MSLN","UPK3B","TOP2A", "BIRC5", "UBE2C")
+
+
+
+
+##1celltype
+Idents(IPF.L)="harmony_clusters"
+cluster_name=c(
+  "0"  = "Macrophages"                                     ,
+  "1"  = "Venous Endothelial"                   ,
+  "2"  = "Fibroblasts"                                     ,
+  "3"  = "Cytotoxic T"                                     ,
+  "4"  = "Secretory cells"                                     ,
+  "5"  = "Monocytes"                                     ,
+  "6"  = "Cytotoxic T"                          ,
+  "7"  = "Mast cells"                           ,
+  "8"  = "Aveolar Type 2"                                     ,
+  "9"  = "Ciliated"                                     ,
+  "10" = "Basal"                                     ,          
+  "11" = "Macrophages"                                     ,
+  "12" = "Macrophages"                                     ,
+  "13" = "Smooth Muscle cells"                                     ,
+  "14" = "Venous Endothelial"                   ,
+  "15" = "Fibroblasts"                                     ,
+  "16" = "B Lymphocytes"                                     ,
+  "17" = "Proliferating cells"                                     ,    
+  "18" = "Lymphatic Endothelial"  
+)
+
+IPF.L=RenameIdents(IPF.L, cluster_name)
+IPF.L$celltype=Idents(IPF.L)
+##2color
+celltype_cols = c(
+  "Venous Endothelial"    = "#1F78B4",  # strong blue
+  "Lymphatic Endothelial" = "#33A02C",  # green
+  
+  "Cytotoxic T"           = "#E31A1C",  # red
+  "B Lymphocytes"         = "#6A3D9A",  # purple
+  "Monocytes"             = "#FF7F00",  # orange
+  "Macrophages"           = "#B15928",  # brown
+  "Mast cells"            = "#FFD92F",  # yellow
+  
+  "Aveolar Type 2"        = "#A6CEE3",  # light blue
+  "Ciliated"              = "#000000",  # black
+  "Secretory cells"       = "#FB9A99",  # pink
+  "Basal"                 = "#CAB2D6",  # lavender
+  "Proliferating cells"   = "#FFFF99",  # pale yellow
+  
+  "Smooth Muscle cells"   = "#8B0000",  # dark red
+  "Fibroblasts"           = "#7F7F7F"   # gray
+)
+
+
+
+##3 center
+umap_df=as.data.frame(Embeddings(IPF.L, "umap.harmony"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=IPF.L$celltype
+centers=aggregate(
+  cbind(umap_1, umap_2) ~ celltype,
+  data = umap_df,
+  FUN = median
+)
+
+##supp duplicate and plot
+library(ggrepel)
+suppressWarnings({
+  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+    geom_point(size = 0.3) +
+    scale_color_manual(values = celltype_cols) +
+    geom_label_repel(
+      data = centers,
+      aes(x = umap_1, y = umap_2, label = celltype),
+      inherit.aes = FALSE,
+      fill = "white",
+      color = "black",
+      size = 4,
+      box.padding = 0.4,
+      label.size = 0.25,
+      segment.color = NA,
+      max.overlaps = Inf
+    ) +
+    theme_classic() +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(x = "umap 1", y = "umap 2")
+})
+fig1a
+ggsave(ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFcellT.png", plot = fig1a, width = 12, height = 8))
+
+
+```
+
+
+
+
+
+```{r}
+#------------------------------
+
+###with the markers
+p=DotPlot(
+  IPF.L,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "celltype") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFmarkers.png", plot = p, width = 16, height = 8)
+```
+
+
+
+
+
+```{r}
+##proportion of cells-------------------
+
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(IPF.L@meta.data) %>%
+  dplyr::count(`sample`, celltype) %>%
+  dplyr::group_by(`sample`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+IPF.L_meta <- dplyr::as_tibble(IPF.L@meta.data) %>%
+  dplyr::rename(sample_id = sample)   # rename to avoid conflicts
+prop_df=IPF.L_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFproportion.png", plot = fig1c, width = 12, height = 10)
+
+```
+
+
+
+###6-proportion of Donors
+```{r}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+#change colname 
+IPF.L$Donors = IPF.L$orig.ident
+
+#create the meta data
+meta = IPF.L@meta.data[, c("harmony_clusters", "Donors")]
+table(meta$Donors)
+
+# Make sure dplyr functions are used explicitly
+meta = IPF.L@meta.data
+
+#the  percentage 
+donors_counts = meta %>%
+  as_tibble() %>%
+  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
+  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
+  dplyr::group_by(harmony_clusters) %>%
+  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
+```
+
+
+
+
+
+```{r, fig.width=10, fig.height=}
+
+#####
+p=ggplot(donors_counts, aes(
+  x = harmony_clusters,
+  y = proportion,
+  group = Donors,
+  color = Donors
+)) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  geom_point(size = 2.8, alpha = 0.9) +
+  scale_y_continuous(labels = scales::percent) +
+  # Use a colorblind-friendly palette with distinct colors
+  scale_color_brewer(palette = "Set1", name = "Donor") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Donors Proportion ",
+    x = "Cluster",
+    y = "Proportion (%)"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+p
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFDonor.png", plot = p, width = 12, height = 8)
+```
+
+
+
+
+```{r}
+
+##correlation for celltype
+
+# 1️⃣ Set identities to cell types
+Idents(IPF.L) <- "celltype"
+
+# sanity check
+levels(Idents(IPF.L))
+# should show cell type names
+
+# 2️⃣ Average expression per cell type
+av.expIPF <- AverageExpression(
+  IPF.L,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+
+# 3️⃣ Cell-type correlation matrix
+correlation_matrixIPF <- cor(
+  as.matrix(av.expIPF),
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrixIPF[is.na(correlation_matrixIPF)] <- 0
+
+# 4️⃣ Save heatmap as PNG
+png(
+  filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPF_celltype_corr.png",
+  width = 3000,
+  height = 2400,
+  res = 300
+)
+
+pheatmap(
+  correlation_matrixIPF,
+  clustering_method = "ward.D2",
+  main = "Correlation Between Cell Types (IPF – Lower Lung)",
+  fontsize_row = 9,
+  fontsize_col = 9
+)
+
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+###save the final meta.data
+```{r}
+
+##save
+# Keep your existing metadata names
+IPF.L$orig.ident="Idiopathic P.Fibrosis in Lower Lung"
+
+# Remove unwanted columns 
+cols_to_remove=c(
+  grep("res_|RNA_snn_res", colnames(IPF.L@meta.data), value = TRUE),
+  "cell_type",
+  "iscell_ed",
+  "iscell_dd",
+  "Donors",
+  "x"
+)
+IPF.L@meta.data=IPF.L@meta.data[, !(colnames(IPF.L@meta.data) %in% cols_to_remove)]
+
+# Ensure active identity reflects your celltype
+Idents(IPF.L)=IPF.L$celltype
+
+# Save 
+saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_Final.rds")
+
+# Save only the final metadata 
+saveRDS(IPF.L@meta.data, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_metadata.rds")
+
+# Optional CSV 
+write.csv(IPF.L@meta.data, 
+          file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_metadata.csv",
+          row.names = TRUE)
+View(IPF.L@meta.data)
+
+```
+
+
+
+
+```{r}
+##save
+saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+
+## run it later to load all 
+#IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+```
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

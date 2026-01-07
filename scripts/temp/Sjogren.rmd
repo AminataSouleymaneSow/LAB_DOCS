@@ -1,0 +1,111 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+ 
+##ANALYSE OF SJ0GRENS DISEASE DATA#####
+
+
+#THE PATH FOR THE WORKING DIRECTORY
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# add this:
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+set.seed(123§
+
+
+```
+
+
+#THE PACKAGES
+```{r}
+##packages
+library(pacman)
+p_load(Seurat,SeuratData,Matrix,dplyr,DropletUtils,presto,gprofiler2,ggplot2,patchwork,gplots,cowplot,gprofiler2,openxlsx, plyr,scDblFinder,BiocParallel)
+
+```
+
+
+
+
+#1LOAD THE DATA
+```{r}
+A = Read10X("data/raw/temp/SjD/dat/A")
+B = Read10X("data/raw/temp/SjD/dat/B")
+D = Read10X("data/raw/temp/SjD/dat/D")
+E = Read10X("data/raw/temp/SjD/dat/E")
+F = Read10X("data/raw/temp/SjD/dat/F")
+G = Read10X("data/raw/temp/SjD/dat/G")
+H = Read10X("data/raw/temp/SjD/dat/H")
+
+```
+
+
+
+
+#2-CREATE THE SEURAT OBJECT FOR EACH OBJ
+```{r}
+##SEURAT
+A_obj = CreateSeuratObject(counts = A, project = "A")
+B_obj = CreateSeuratObject(counts = B, project = "B")
+D_obj = CreateSeuratObject(counts = D, project = "D")
+E_obj = CreateSeuratObject(counts = E, project = "E")
+F_obj = CreateSeuratObject(counts = F, project = "F")
+G_obj = CreateSeuratObject(counts = G, project = "G")
+H_obj = CreateSeuratObject(counts = H, project = "H")
+```
+
+
+
+
+#3-MERGE ALL SEURAT INTO ONE 
+```{r}
+#merge
+Sjo_obj = merge(
+  A_obj,
+  y = list(B_obj, D_obj, E_obj, F_obj, G_obj, H_obj),
+  add.cell.ids = c("A","B","D","E","F","G","H"),
+  project = "Sjo_obj"
+)
+
+#to see if i have duplicate or not : should see false 
+any(duplicated(colnames(Sjo_obj)))
+
+```
+
+
+#optionnal
+```{r}
+##To save memory
+rm(A,B,D,E,F,G,H,A_obj,B_obj,D_obj,E_obj,F_obj,G_obj,H_obj)
+ gc(reset = TRUE)  
+```
+
+
+```{r}
+#Check the number of cells 
+Sjo_obj
+table(Sjo_obj$orig.ident)
+```
+
+
+
+#TO SAVE
+```{r}
+##save the file and open a new script to remove and keep this to always have the scripts.
+saveRDS(Sjo_obj, file = "data/process/temp/Sjo_obj.RDS")
+
+## run it later to load all 
+#Sjo_obj = readRDS("data/process/temp/Sjo_obj.RDS")
+```
+
+
+
+
+
+
+
+
+
+

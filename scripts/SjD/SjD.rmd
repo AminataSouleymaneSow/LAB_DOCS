@@ -1,0 +1,949 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+###Sjogrens Diseases############
+
+
+##packages
+```{r setup, include=FALSE}
+#-----
+library(pacman)
+  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,hdf5r,DropletUtils)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+```
+
+
+###STEP_1Analysis for the CD45 NEGATIVE#############
+
+##1-load the obj CD45 negative
+```{r}
+#-----
+cd45neg=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45neg_annotated_clean.RDS")
+cd45neg
+#to see all annotations
+colnames(cd45neg@meta.data)
+p=DimPlot(cd45neg, label = TRUE)
+ggsave("output/SjD/cd45neg/SjDintegration.png",plot = p, width = 12, height = 8)
+```
+
+We have two type of cell_annotattion the :major_annot and specif_annot(look for colnames(cd45neg@meta.data) to see the colnames)
+
+
+###process for the major_annotation#####
+
+###2 Annotation 
+```{r}
+##plot for annotations
+#1for the major annotation
+
+Idents(cd45neg)="major_annot_joint"
+cd45neg$celltype=Idents(cd45neg)  
+
+#color for major annotation
+celltype_cols=c(
+"Fibroblasts"          = "#D73027",
+"Endothelial_cells"    = "#4575B4",
+"Mural"                = "#1B9E77",
+"Acinar_cells"         = "#762A83",
+"Ductal_cells"         = "#FDAE61",
+"Neuronal_cells"       = "#E7298A"
+)
+ #umap
+umap_df=as.data.frame(Embeddings(cd45neg, "umap_h"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=cd45neg$celltype
+
+#center
+centers=aggregate(cbind(umap_1, umap_2) ~ celltype,data = umap_df,FUN = median)
+  
+library(ggrepel)
+library(ggplot2)
+
+fig_major=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umap_1, y = umap_2, label = celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 4,
+    box.padding = 0.4,
+    label.size = 0.30,
+    segment.color = NA,
+    max.overlaps = Inf
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "UMAP 1", y = "UMAP 2")
+fig_major
+ggsave("output/SjD/cd45neg/SjD_Major_ann.png", plot = fig_major, width =12, height = 8 )
+```
+
+
+
+
+
+###3 proportion of cells
+```{r}
+
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(cd45neg@meta.data) %>%
+  dplyr::count(`sample_name`, celltype) %>%
+  dplyr::group_by(`sample_name`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+cd45neg_meta <- dplyr::as_tibble(cd45neg@meta.data) %>%
+  dplyr::rename(sample_id = sample_name)   # rename to avoid conflicts
+prop_df=cd45neg_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/SjD/cd45neg/SjD_Major_proport.png", plot = fig1c, width = 12, height = 8)
+
+```
+
+
+
+###4correlation between celltype
+```{r}
+#---
+#join layers(we have a lot of assays)
+cd45neg <- JoinLayers(
+  cd45neg,
+  assay = "RNA"
+)
+
+#average expression
+agg.exp = AggregateExpression( cd45neg,assays = "RNA",layers = "counts", group.by = "celltype")$RNA
+dim(agg.exp)
+colnames(agg.exp)
+ #correlation 
+agg.exp.mat = as.matrix(agg.exp)
+agg.exp.mat = log1p(agg.exp.mat)
+
+cor_mat = cor(
+  agg.exp.mat,
+  method = "pearson",
+  use = "pairwise.complete.obs"
+)
+
+cor_mat[is.na(cor_mat)] = 0
+
+#avoid error
+set.seed(1)
+cor_mat = cor_mat + matrix(
+  runif(length(cor_mat), 1e-8, 1e-7),
+  nrow = nrow(cor_mat)
+)
+ #save 
+png(
+  filename = "output/SjD/cd45neg/SjD_Major_cor.png",
+  width = 3000,
+  height = 2600,
+  res = 300
+)
+#plot
+library(pheatmap)
+pheatmap(
+  cor_mat,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  fontsize_row = 12,
+  fontsize_col = 12,
+  angle_col = 45,
+  border_color = NA
+)
+dev.off()
+
+
+```
+
+
+
+##5Donor proportions
+```{r}
+##------
+library(dplyr)
+
+prop_donor_celltype <- cd45neg@meta.data %>%
+  as.data.frame() %>%
+  dplyr::count(celltype, sample_name) %>%   # number of cells
+  dplyr::group_by(celltype) %>%              # normalize within celltype
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+```
+
+
+```{r}
+#----plot
+fig = ggplot(
+  prop_donor_celltype,
+  aes(x = celltype, y = proportion, fill = sample_name)
+) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_classic() +
+  ylab("Proportion of cells") +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+
+fig
+
+ggsave("output/SjD/cd45neg/Sj_Don_Major.png", plot = fig, width = 12, height = 8)
+
+```
+
+
+
+
+
+
+
+
+
+###process for the specific_annotation#####
+specific_annot
+
+##1annotation
+
+```{r}
+##plot for annotations
+#1for the major annotation
+
+Idents(cd45neg)="specific_annot"
+cd45neg$celltype=Idents(cd45neg)  
+
+#color for major annotation
+celltype_cols = c(
+  "VSMC"                                    = "#D73027",
+  "Capillary pericytes"                     = "#4575B4",
+  "Immunopericytes"                         = "#1B9E77",
+  "Neuronal cells"                          = "#762A83",
+  "Endothelial Progenitors"                 = "#FDAE61",
+  "Arterial Endothelial"                    = "#E7298A",
+  "Lymphatic Endothelial cells"             = "#66A61E",
+  "CCL14 Venous Endothelial"                = "#E6AB02",
+  "Venous Endothelial"                      = "#A6761D",
+  "Fibroblasts_3"                           = "#666666",
+  "Fibroblasts_4"                           = "#1F78B4",
+  "Serous Acinar Epithelial cells"          = "#B2DF8A",
+  "Intercalated Ductal Epithelial cells"    = "#33A02C",
+  "Seromucous Acinar Epithelial cells"      = "#FB9A99",
+  "Striated Ductal Epithelial cells"        = "#E31A1C",
+  "Basal Epithelial cells"                  = "#FDBF6F",
+  "Mucous Acinar Epithelial cells"          = "#FF7F00",
+  "Epithelial Progenitor cells"             = "#CAB2D6",
+  "Ionocytes"                               = "#6A3D9A",
+  "Myoepithelial cells"                     = "#B15928",
+  "Fibroblasts_1"                           = "#8DA0CB",
+  "Fibroblasts_2"                           = "#66C2A5",
+  "Fibroblasts_5"                           = "#FC8D62",
+  "SPARC+ COL3A1 + Fibroblasts"             = "#E78AC3"
+)
+
+ #umap
+umap_df=as.data.frame(Embeddings(cd45neg, "umap_h"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=cd45neg$celltype
+
+#center
+centers=aggregate(cbind(umap_1, umap_2) ~ celltype,data = umap_df,FUN = median)
+  
+library(ggrepel)
+library(ggplot2)
+
+fig=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umap_1, y = umap_2, label = celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 4,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA,
+    max.overlaps = Inf
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "UMAP 1", y = "UMAP 2")
+fig
+ggsave("output/SjD/cd45neg/SjD_specific_ann.png", plot = fig, width =12, height = 8 )
+
+```
+
+
+
+
+###2 proportion of cells
+```{r}
+#------
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(cd45neg@meta.data) %>%
+  dplyr::count(`sample_name`, celltype) %>%
+  dplyr::group_by(`sample_name`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+cd45neg_meta <- dplyr::as_tibble(cd45neg@meta.data) %>%
+  dplyr::rename(sample_id = sample_name)   # rename to avoid conflicts
+prop_df=cd45neg_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/SjD/cd45neg/SjD_specific_ann_Proport.png", plot = fig1c, width = 12, height = 8)
+```
+
+
+
+###3correlation between cell_types
+```{r}
+#---
+#join layers(we have a lot of assays)
+cd45neg = JoinLayers(
+  cd45neg,
+  assay = "RNA"
+)
+
+#average expression
+agg.exp = AggregateExpression( cd45neg,assays = "RNA",layers = "counts", group.by = "celltype")$RNA
+dim(agg.exp)
+colnames(agg.exp)
+ #correlation 
+agg.exp.mat = as.matrix(agg.exp)
+agg.exp.mat = log1p(agg.exp.mat)
+
+cor_mat = cor(
+  agg.exp.mat,
+  method = "pearson",
+  use = "pairwise.complete.obs"
+)
+
+cor_mat[is.na(cor_mat)] = 0
+
+#avoid error
+set.seed(1)
+cor_mat = cor_mat + matrix(
+  runif(length(cor_mat), 1e-8, 1e-7),
+  nrow = nrow(cor_mat)
+)
+ #save 
+png(
+  filename = "output/SjD/cd45neg/SjD_specific_cell_cor.png",
+  width = 3600,
+  height = 2600,
+  res = 300
+)
+#plot
+library(pheatmap)
+pheatmap(
+  cor_mat,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  fontsize_row = 12,
+  fontsize_col = 12,
+  angle_col = 45,
+  border_color = NA
+)
+dev.off()
+
+```
+
+
+###4Donor proportions
+```{r}
+##------
+library(dplyr)
+
+prop_donor_celltype <- cd45neg@meta.data %>%
+  as.data.frame() %>%
+  dplyr::count(celltype, sample_name) %>%   # number of cells
+  dplyr::group_by(celltype) %>%              # normalize within celltype
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+```
+
+
+```{r}
+#----plot
+fig = ggplot(
+  prop_donor_celltype,
+  aes(x = celltype, y = proportion, fill = sample_name)
+) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_classic() +
+  ylab("Proportion of cells") +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+
+fig
+
+ggsave("output/SjD/cd45neg/SjD_specific_cell_Donor.png", plot = fig, width = 12, height = 8)
+#
+
+```
+
+##save
+```{r}
+###
+saveRDS(cd45neg, file = "data/process/SeuratObjects/SjD/cd45neg_process.rds")
+
+#load later
+#readRDS("data/process/SeuratObjects/SjD/cd45neg_process.rds")
+```
+
+
+
+
+
+
+
+
+
+#####------------------------#################------------------------------------____----------------------------------------------- 
+
+###STEP_2_Analysis for the CD45 Positive######################################################
+
+#####----------------------------------------------------------------------------------------------------------------------------------------------------
+
+####For  major_annot_joint#####
+##1 load the data annotation for
+```{r}
+#---load the data
+cd45pos=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45pos_annotated_clean.RDS")
+
+#colnames
+colnames(cd45pos@meta.data)
+
+```
+
+
+
+###2annotation
+```{r}
+##plot for annotations
+#1for the major annotation
+
+Idents(cd45pos)="major_annot_joint"
+cd45pos$celltype=Idents(cd45pos)  
+
+#color for major annotation
+celltype_cols=c(
+"B cells"                       = "#D73027",
+"CD8"                           = "#FC8D62",
+"CD4"                           = "#1B9E77",
+"gd/NK"                         = "#762A83",
+"Plasma cells"                  = "#FDAE61",
+"Proliferating cells"           = "#E7298A",
+"Mono/Mac"                      = "#FB9A99"
+)
+ #umap
+umap_df=as.data.frame(Embeddings(cd45pos, "umap_h"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=cd45pos$celltype
+
+#center
+centers=aggregate(cbind(umap_1, umap_2) ~ celltype,data = umap_df,FUN = median)
+  
+library(ggrepel)
+library(ggplot2)
+
+fig=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umap_1, y = umap_2, label = celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 4,
+    box.padding = 0.4,
+    label.size = 0.30,
+    segment.color = NA,
+    max.overlaps = Inf
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "UMAP 1", y = "UMAP 2")
+fig
+ggsave("output/SjD/cd45pos/SjDMajor_ann.png", plot = fig_major, width =12, height = 8 )
+
+```
+
+
+
+###3 Proportion of cells
+```{r}
+####plot
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(cd45pos@meta.data) %>%
+  dplyr::count(`sample_name`, celltype) %>%
+  dplyr::group_by(`sample_name`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+cd45pos_meta <- dplyr::as_tibble(cd45pos@meta.data) %>%
+  dplyr::rename(sample_id = sample_name)   # rename to avoid conflicts
+prop_df=cd45pos_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/SjD/cd45pos/SjDMajorproport.png", plot = fig1c, width = 12, height = 8)
+
+```
+
+
+
+
+###4 correlation between cell_types
+
+```{r}
+#---
+#join layers(we have a lot of assays)
+cd45pos = JoinLayers(
+  cd45pos,
+  assay = "RNA"
+)
+
+#average expression
+agg.exp = AggregateExpression( cd45pos,assays = "RNA",layers = "counts", group.by = "celltype")$RNA
+dim(agg.exp)
+colnames(agg.exp)
+ #correlation 
+agg.exp.mat = as.matrix(agg.exp)
+agg.exp.mat = log1p(agg.exp.mat)
+
+cor_mat = cor(
+  agg.exp.mat,
+  method = "pearson",
+  use = "pairwise.complete.obs"
+)
+
+cor_mat[is.na(cor_mat)] = 0
+
+#avoid error
+set.seed(1)
+cor_mat = cor_mat + matrix(
+  runif(length(cor_mat), 1e-8, 1e-7),
+  nrow = nrow(cor_mat)
+)
+ #save 
+png(
+  filename = "output/SjD/cd45pos/SjDMajorcor.png",
+  width = 3000,
+  height = 2600,
+  res = 300
+)
+#plot
+library(pheatmap)
+pheatmap(
+  cor_mat,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  fontsize_row = 12,
+  fontsize_col = 12,
+  angle_col = 45,
+  border_color = NA
+)
+dev.off()
+
+```
+
+
+###5Donor proportions
+```{r}
+##------
+library(dplyr)
+
+prop_donor_celltype <- cd45pos@meta.data %>%
+  as.data.frame() %>%
+  dplyr::count(celltype, sample_name) %>%   # number of cells
+  dplyr::group_by(celltype) %>%              # normalize within celltype
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+```
+
+
+```{r}
+#----plot
+fig = ggplot(
+  prop_donor_celltype,
+  aes(x = celltype, y = proportion, fill = sample_name)
+) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_classic() +
+  ylab("Proportion of cells") +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+
+fig
+
+ggsave("output/SjD/cd45pos/SjD_Major_Donor.png", plot = fig, width = 12, height = 8)
+
+
+```
+
+
+
+
+
+
+####process for the specific_annotation in cd45_positive#################
+specific_annot
+
+###1annotation
+```{r}
+
+##plot for annotations
+#1for the major annotation
+
+Idents(cd45pos)="specific_annot"
+cd45pos$celltype=Idents(cd45pos)  
+
+#color for major annotation
+celltype_cols = c(
+  "Activated Treg cells"                   = "#E76F51",
+  "CD16+ NK cells"                         = "#F4A261",
+  "CD27+ NK cells"                         = "#E9C46A",
+  "CD56+ NK cells"                         = "#D4A373",
+  "CD62L+ TPEx"                            = "#CDB4DB",
+  "CD8+ Tcm"                               = "#90DBF4",
+  "CD8+ Tem"                               = "#48CAE4",
+  "CD8+ Trm"                               = "#0096C7",
+  "cDC1"                                   = "#A3B18A",
+  "cDC2"                                   = "#588157",
+  "Cytotoxic Th cells"                     = "#6A994E",
+  "DLGAP1+ Th cells"                       = "#A7C957",
+  "Exhausted CD8+ T cells"                 = "#6D597A",
+  "Exhausted IEG CD8+ T cells"             = "#B56576",
+  "GC B cells_1"                           = "#4CC9F0",
+  "GC B cells_2"                           = "#4895EF",
+  "GC B cells_3"                           = "#4361EE",
+  "GC B cells_4"                           = "#3A0CA3",
+  "gd-T cells"                             = "#2A9D8F",
+  "IgA Plasma cells"                       = "#F72585",
+  "IgG1 Plasma cells"                      = "#FF7096",
+  "IgG3/4 Plasma cells"                    = "#FF8FAB",
+  "IgM Plasma cells"                       = "#FFC2D1",
+  "ILCs"                                   = "#52B788",
+  "Infiltrating CD8+ T cells"              = "#1B9AAA",
+  "Inflammatory CD8+ T cells"              = "#0077B6",
+  "inflammatory cDC2"                      = "#6C757D",
+  "LAMP3+ cDCs"                            = "#ADB5BD",
+  "LTB+ Th17 cells"                        = "#9D4EDD",
+  "M1 Macrophages"                         = "#E63946",
+  "M2 Macrophages"                         = "#A8DADC",
+  "Memory Th cells"                        = "#457B9D",
+  "Migrating Th17 cells"                   = "#5E60CE",
+  "Mo-DC"                                  = "#7400B8",
+  "Monocytes"                              = "#B5179E",
+  "Naive B cells"                          = "#F1FAEE",
+  "Naive CD8+ T cells"                     = "#8ECAE6",
+  "Naive Tfh cells"                        = "#219EBC",
+  "Naive Th cells"                         = "#023047",
+  "Proliferating cells"                    = "#FFBE0B",
+  "Recruited Activated CD8-"               = "#FB5607",
+  "Recruiting Effector CD8+"               = "#FF006E",
+  "Resting Treg cells"                     = "#8338EC",
+  "Secretory Tph cells"                    = "#3A86FF",
+  "TNF+ Plasma cells"                      = "#D00000",
+  "Tph17"                                  = "#9B2226"
+)
+
+
+ #umap
+umap_df=as.data.frame(Embeddings(cd45pos, "umap_h"))
+colnames(umap_df)=c("umap_1", "umap_2")
+umap_df$celltype=cd45pos$celltype
+
+#center
+centers=aggregate(cbind(umap_1, umap_2) ~ celltype,data = umap_df,FUN = median)
+  
+library(ggrepel)
+library(ggplot2)
+
+fig=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umap_1, y = umap_2, label = celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 3,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA,
+    max.overlaps = Inf
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "UMAP 1", y = "UMAP 2")
+fig
+ggsave("output/SjD/cd45pos/SjD_specific_ann.png", plot = fig, width =12, height = 8 )
+```
+
+
+
+###2proportions of cells
+```{r}
+####plot
+library(dplyr)
+library(ggplot2)
+# Use explicit dplyr:: functions to avoid masking issues
+prop_df=dplyr::as_tibble(cd45pos@meta.data) %>%
+  dplyr::count(`sample_name`, celltype) %>%
+  dplyr::group_by(`sample_name`) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+
+##rename col
+cd45pos_meta <- dplyr::as_tibble(cd45pos@meta.data) %>%
+  dplyr::rename(sample_id = sample_name)   # rename to avoid conflicts
+prop_df=cd45pos_meta %>%
+  dplyr::count(sample_id, celltype) %>%
+  dplyr::group_by(sample_id) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+##plot
+fig1c=ggplot(
+  prop_df,
+  aes(x = celltype, y = proportion, color = celltype)
+) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2) +
+  scale_color_manual(values = celltype_cols) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  ylab("Proportion") +
+  xlab("")
+fig1c
+ggsave(filename = "output/SjD/cd45pos/SjD_specific_cell_proport.png", plot = fig1c, width = 12, height = 8)
+```
+
+
+
+
+###3correlation between celltype
+```{r}
+#---
+#join layers(we have a lot of assays)
+cd45pos = JoinLayers(
+  cd45pos,
+  assay = "RNA"
+)
+
+#average expression
+agg.exp = AggregateExpression( cd45pos,assays = "RNA",layers = "counts", group.by = "celltype")$RNA
+dim(agg.exp)
+colnames(agg.exp)
+ #correlation 
+agg.exp.mat = as.matrix(agg.exp)
+agg.exp.mat = log1p(agg.exp.mat)
+
+cor_mat = cor(
+  agg.exp.mat,
+  method = "pearson",
+  use = "pairwise.complete.obs"
+)
+
+cor_mat[is.na(cor_mat)] = 0
+
+#avoid error
+set.seed(1)
+cor_mat = cor_mat + matrix(
+  runif(length(cor_mat), 1e-8, 1e-7),
+  nrow = nrow(cor_mat)
+)
+ #save 
+png(
+  filename = "output/SjD/cd45pos/SjD_specific_cell_cor.png",
+  width = 3000,
+  height = 2600,
+  res = 300
+)
+#plot
+library(pheatmap)
+pheatmap(
+  cor_mat,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  fontsize_row = 12,
+  fontsize_col = 12,
+  angle_col = 45,
+  border_color = NA
+)
+dev.off()
+```
+
+
+
+###4Donor proportion
+```{r}
+##------
+library(dplyr)
+
+prop_donor_celltype <- cd45pos@meta.data %>%
+  as.data.frame() %>%
+  dplyr::count(celltype, sample_name) %>%   # number of cells
+  dplyr::group_by(celltype) %>%              # normalize within celltype
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup()
+```
+
+
+
+```{r}
+#----plot
+fig = ggplot(
+  prop_donor_celltype,
+  aes(x = celltype, y = proportion, fill = sample_name)
+) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_classic() +
+  ylab("Proportion of cells") +
+  xlab("") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+
+fig
+
+ggsave("output/SjD/cd45pos/SjD_specific_Donor.png", plot = fig, width = 12, height = 8)
+
+##meta data
+View(cd45pos@meta.data)
+```
+
+
+
+###save
+```{r}
+###
+saveRDS(cd45pos, file = "data/process/SeuratObjects/SjD/cd45_process.rds")
+
+#load later
+readRDS("data/process/SeuratObjects/SjD/cd45_process.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
