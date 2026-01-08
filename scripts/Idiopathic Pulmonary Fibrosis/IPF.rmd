@@ -14,7 +14,7 @@ library(pacman)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-set.seed(123)
+
 
 ```
 
@@ -253,21 +253,21 @@ IPF.U=RenameIdents(IPF.U, cluster_name)
 IPF.U$celltype=Idents(IPF.U)
 ##2color
 celltype_cols <- c(
-  "Macrophages"           = "#6A3D9A",  # strong red
-  "Monocytes"             = "#66C2A5", # orange
-  "Mast cells"            = "#FFD92F",  # yellow
-  "NK cells"              = "#4DAF4A",  # green
-  "Cytotoxic T"           = "#377EB8",  # blue
-  "B Lymphocytes"         = "#000000",  # black
-  "Fibroblasts"           = "#A65628",  # brown
-  "Smooth Muscle cells"   = "#904EA3",  # purple
-  "Venous Endothelial"    = "#FF7F00",  # teal
-  "Arterial Endothelial"  = "#1B9E77",  # dark green
-  "Lymphatic Endothelial" = "#F781BF",  # light cyan
-  "Goblet"                = "#8DD3C7" ,# pink
-  "Aveolar Type 2"        = "#E41A1C",  # dark violet
-  "Ciliated"              = "#B15928",  # rust
-  "Proliferating cells"   = "#999999"   # grey
+  "Macrophages"           = "#6A3D9A",  
+  "Monocytes"             = "#66C2A5", 
+  "Mast cells"            = "#FFD92F",  
+  "NK cells"              = "#4DAF4A",  
+  "Cytotoxic T"           = "#377EB8",  
+  "B Lymphocytes"         = "#000000",  
+  "Fibroblasts"           = "#A65628",  
+  "Smooth Muscle cells"   = "#904EA3",  
+  "Venous Endothelial"    = "#FF7F00",  
+  "Arterial Endothelial"  = "#1B9E77",  
+  "Lymphatic Endothelial" = "#F781BF",  
+  "Goblet"                = "#8DD3C7",
+  "Aveolar Type 2"        = "#E41A1C",  
+  "Ciliated"              = "#B15928",  
+  "Proliferating cells"   = "#999999"   
 )
 
 
@@ -585,8 +585,6 @@ dev.off()
 
 
 
-
-
 ###Final meta.data with the cells names
 ```{r}
 ##save
@@ -619,13 +617,13 @@ View(IPF.U@meta.data)
 ```
 
 
+
 ###save
 ```{r}
-##save
 #saveRDS(IPF.U, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
 
 ## run it later to load all 
-#IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
 ```
 
 
@@ -652,7 +650,7 @@ View(IPF.U@meta.data)
 
 
 
----------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------___________---------------------------------------------------------------
 ----------------------------------------------------------------------------------------------------------------------------
 #####STEP-3 ANALYSIS FOR IPF in LOWER lUNG
 -----------------------------------------------------------------------------------------------------------------------
@@ -673,6 +671,7 @@ IPF.L=subset(IPF.L, subset=nFeature_RNA>200 & nFeature_RNA<7000 & percent.mt <10
 ```
 
 
+
 ####2-statistics
 ```{r}
 IPF.L=NormalizeData(IPF.L)
@@ -680,9 +679,11 @@ IPF.L=FindVariableFeatures(IPF.L)
 IPF.L=ScaleData(IPF.L,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = IPF.L))
 IPF.L=RunPCA(IPF.L, features = VariableFeatures(object = IPF.L))
 ElbowPlot(IPF.L)
-#IPF.U=RunUMAP(IPF.U, dims = 1:20)
-#P=DimPlot(IPF.U,reduction = "umap", label = TRUE)
+#IPF.L=RunUMAP(IPF.L, dims = 1:20)
+#P=DimPlot(IPF.L,reduction = "umap", label = TRUE)
+
 ```
+
 
 
 ###3-integration
@@ -1077,10 +1078,10 @@ View(IPF.L@meta.data)
 
 ```{r}
 ##save
-saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+#saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
 
 ## run it later to load all 
-#IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
 ```
 
 ```

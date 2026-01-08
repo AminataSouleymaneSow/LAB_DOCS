@@ -631,7 +631,7 @@ View(SS.U@meta.data)
 
 ##save
 ```{r}
-saveRDS(SS.U, file = "data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+#saveRDS(SS.U, file = "data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
 
 ## run it later to load all 
 SS.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
@@ -1107,10 +1107,10 @@ View(SS.L@meta.data)
 
 ###save
 ```{r}
-saveRDS(SS.L, file = "data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+#saveRDS(SS.L, file = "data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 
 ## run it later to load all 
-#SS.U = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+SS.L = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 ```
 
 

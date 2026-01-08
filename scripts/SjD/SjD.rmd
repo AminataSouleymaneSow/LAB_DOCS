@@ -454,10 +454,10 @@ ggsave("output/SjD/cd45neg/SjD_specific_cell_Donor.png", plot = fig, width = 12,
 ##save
 ```{r}
 ###
-saveRDS(cd45neg, file = "data/process/SeuratObjects/SjD/cd45neg_process.rds")
+#saveRDS(cd45neg, file = "data/process/SeuratObjects/SjD/cd45neg_process.rds")
 
 #load later
-#readRDS("data/process/SeuratObjects/SjD/cd45neg_process.rds")
+cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_process.rds")
 ```
 
 
@@ -929,7 +929,7 @@ View(cd45pos@meta.data)
 ###save
 ```{r}
 ###
-saveRDS(cd45pos, file = "data/process/SeuratObjects/SjD/cd45_process.rds")
+#saveRDS(cd45pos, file = "data/process/SeuratObjects/SjD/cd45_process.rds")
 
 #load later
 readRDS("data/process/SeuratObjects/SjD/cd45_process.rds")

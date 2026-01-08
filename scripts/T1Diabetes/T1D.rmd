@@ -529,10 +529,10 @@ View(T1D@meta.data)
 ###save
 ```{r}
 ##save
-saveRDS(T1D, file="data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+#saveRDS(T1D, file="data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
 
 #load it
-#T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
 ```
 
 

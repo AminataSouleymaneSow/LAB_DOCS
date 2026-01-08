@@ -116,6 +116,8 @@ write.xlsx(MS_markers,file = "output/Multiple_Sclerosis/MS_markers.xlsx")
 
 ```
 
+
+
 ###4-Annotation based on markers genes
 
 ```{r, fig.width=12, fig.height=8}
@@ -359,7 +361,7 @@ View(MS_obj@meta.data)
 #saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
 
 ## run it later to load all 
-#MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
 ```
 
 

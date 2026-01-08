@@ -462,7 +462,7 @@ View(RA_obj@meta.data)
 
 ```{r}
 ###save
-saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
+#saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
 
 ## run it later to load all 
 #RA_obj = readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")

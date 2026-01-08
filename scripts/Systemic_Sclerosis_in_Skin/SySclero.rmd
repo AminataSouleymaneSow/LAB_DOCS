@@ -498,7 +498,7 @@ View(SS_obj@meta.data)
 #saveRDS(SS_obj, file = "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
 
 ## run it later to load all 
-#SS_obj = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
+SS_obj = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
 ```
 
 
