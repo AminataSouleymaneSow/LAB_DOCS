@@ -21,6 +21,12 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 ```{r}
 ##load the data and set only the T1D
 T1D=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Pancreas Type 1 Diabetes/Pancreas Type 1 Diabetes.rds")
+
+# check default assay
+DefaultAssay(T1D)
+# if not RNA, set as RNA
+DefaultAssay(T1D) = "RNA"
+
 setT1D = c("T1D_ 1","T1D_ 2","T1D_ 3","T1D_ 4","T1D_ 5","T1D_ 6","T1D_ 7","T1D_ 8","T1D_ 9")
 T1D = subset (T1D, subset = disease_id %in% setT1D)
 saveRDS (T1D,file = "data/process/SeuratObjects/T1Diabetes/T1D_raw.rds")
@@ -62,7 +68,7 @@ DimPlot(T1D,reduction = "umap", label = TRUE)
 ##integration
 library(harmony)
 T1D=RunHarmony(T1D,group.by.vars = "sample_id",orig.reduction = "pca",dims.use = 1:30  )
-DefaultAssay(T1D)="SCT"
+
 
 T1D = RunUMAP(T1D, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
 p=DimPlot(T1D,reduction = "umap.harmony",group.by = c("sample_id"),label.size = 2, shuffle = T)
@@ -84,7 +90,7 @@ for (res in res_cols) {
   readline(prompt="Press [Enter] to see the next resolution...")
 }
 #save 
-p=DimPlot(T1D,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6")
+p=DimPlot(T1D,group.by = "res_0.4",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.4")
 ggsave(filename = "output/T1Diabetes/T1Dresolution.png",plot = p,width = 12,height = 8,dpi = 300)
 ```
 
@@ -94,7 +100,7 @@ ggsave(filename = "output/T1Diabetes/T1Dresolution.png",plot = p,width = 12,heig
 
 ###clusters
 T1D=FindNeighbors(T1D,reduction= "harmony",dims = 1:30)
-T1D=FindClusters(T1D, resolution = 0.6,cluster.name = "harmony_clusters")
+T1D=FindClusters(T1D, resolution = 0.4,cluster.name = "harmony_clusters")
 #markers
 T1Dmarkers=FindAllMarkers(T1D,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
 T1Dmarkers=T1Dmarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
@@ -114,31 +120,117 @@ cells (PPY high), Stellates cells (COL1A1 high)
 ###5 annotation
 
 ```{r}
-
+#
 #--------markers------
-genes=c("PRSS1","GCG","INS","SST","KRT19","VWF","GHRL","NCF2")
+genes=c("PRSS1","GCG","INS","SST","KRT19","VWF","GHRL","NCF2","COL1A1","PPY")
+
+p=DotPlot(
+  T1D,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "harmony_clusters") + RotatedAxis() 
+p
+#save
+ggsave(filename = "output/T1Diabetes/T1Dcluster.png", plot = p, width = 12, height = 8)
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+#------cluster_specifique_name
+##1celltype
+Idents(T1D)="harmony_clusters"
+cluster_name_x=c(
+  "0"  = "Alpha cells_0" ,
+  "1"  = "Ductal cells_1"    ,
+  "2"  = "Acinar cells_2"            ,
+  "3"  = "Acinar cells_3"      ,
+  "4"  = "Acinar cells_4"    ,
+  "5"  = "Beta cells_5"            ,
+  "6"  = "Endothelial cells_6"            ,
+  "7"  = "Alpha cells_7"            ,
+  "8"  = "Stellate cells_8"             ,
+  "9"  = "Acinar cells_9"               ,
+  "10" = "Acinar cells_10"        ,
+  "11" = "Acinar cells_11"    ,
+  "12" = "Acinar cells_12"    ,
+  "13" = "Ductal cells_13"           ,
+  "14" = "Alpha cells_14"             ,
+  "15" = "Stellate cells_15"            
+  
+)
+
+T1D=RenameIdents(T1D, cluster_name_x)
+T1D$celltype=Idents(T1D)
+
+#plot
+p=DotPlot(
+  T1D,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+p
+#save
+ggsave(filename = "output/T1Diabetes/T1D_cluster_name.png", plot = p, width = 12, height = 8)
+
+
+```
+
+
+
+
+
+
+```{r}
+
+
 ##1celltype
 Idents(T1D)="harmony_clusters"
 cluster_name=c(
-  "0"  = "Acinar cells" ,
-  "1"  = "Alpha cells"    ,
-  "2"  = "Ductal cells"            ,
+  "0"  = "Alpha cells" ,
+  "1"  = "Ductal cells"    ,
+  "2"  = "Acinar cells"            ,
   "3"  = "Acinar cells"      ,
-  "4"  = "Alpha cells"    ,
-  "5"  = "Acinar cells"            ,
-  "6"  = "Delta cells"            ,
-  "7"  = "Endothelial cells"            ,
-  "8"  = "Beta cells"             ,
-  "9"  = "Stellates cells"               ,
-  "10" = "Immune cells"        ,
+  "4"  = "Acinar cells"    ,
+  "5"  = "Beta cells"            ,
+  "6"  = "Endothelial cells"            ,
+  "7"  = "Alpha cells"            ,
+  "8"  = "Stellate cells"             ,
+  "9"  = "Acinar cells"               ,
+  "10" = "Acinar cells"        ,
   "11" = "Acinar cells"    ,
-  "12" = "Endothelial cells"    ,
-  "13" = "Acinar cells"           ,
-  "14" = "Ductal cells"             ,
-  "15" = "Endothelial cells"            ,
-  "16" = "Ductal cells"          ,
-  "17" = "Acinar cells"      
-  
+  "12" = "Acinar cells"    ,
+  "13" = "Ductal cells"           ,
+  "14" = "Alpha cells"             ,
+  "15" = "Stellate cells"            
 )
 
 T1D=RenameIdents(T1D, cluster_name)
@@ -148,12 +240,9 @@ celltype_cols=c(
   "Acinar cells"            = "#D73027",  
   "Alpha cells"             = "#4575B4", 
   "Ductal cells"            = "#FDAE61",  
-  "Delta cells"             = "#1B9E77", 
-  "Endothelial cells"       = "#66A61E", 
-  "Beta cells"              = "#000000",  
-  "Stellates cells"         = "#762A83", 
-  "Immune cells"            = "#74ADD1"  
-
+  "Delta cells"             = "#762A83",
+  "Endothelial cells"       = "#66A61E",
+  "Stellate cells"          = "#FFD92F"
   )
 
 ##3 center
@@ -236,9 +325,9 @@ dir.create("output/T1Diabetes", recursive = TRUE, showWarnings = FALSE)
 # Average expression per cluster (SCT)
 av.expSS <- AverageExpression(
   T1D,
-  assays = "SCT",
+  assays = "RNA",
   slot = "data"
-)$SCT
+)$RNA
 
 # Correlation matrix
 correlation_matrixSS <- cor(
@@ -502,7 +591,21 @@ cols_to_remove=c(
   "cell_type",
   "iscell_ed",
   "iscell_dd",
-  "Donors"
+  "Donors",
+  "seurat_clusters",
+  "x",
+  "scDblFinder.sample",
+  "scDblFinder.score",
+  "scDblFinder.weighted",
+  "scDblFinder.csds_sample",
+  "nCount_SCT",
+  "nFeature_SCT",
+  "SCT_sn_res.0.8",
+  "SCT_snn_res.0.8",
+  "scDblFinder.cxds_score",
+  "scDblFinder.class",
+  "disease_state",
+  "hpap_id"
 )
 T1D@meta.data=T1D@meta.data[, !(colnames(T1D@meta.data) %in% cols_to_remove)]
 
@@ -532,7 +635,7 @@ View(T1D@meta.data)
 #saveRDS(T1D, file="data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
 
 #load it
-T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+#T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
 ```
 
 

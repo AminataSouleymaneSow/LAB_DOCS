@@ -16,7 +16,7 @@ library(pacman)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-set.seed()
+
 ```
 
 
@@ -120,9 +120,107 @@ write.xlsx(MS_markers,file = "output/Multiple_Sclerosis/MS_markers.xlsx")
 
 ###4-Annotation based on markers genes
 
+
+```{r}
+##plots with the markers 
+##marker used to make gice cellname
+genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
+
+p=DotPlot(
+  MS_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "seurat_clusters") + RotatedAxis() 
+p
+ggsave(filename = "output/Multiple_Sclerosis/MScluster.png", plot = p, width = 10, height = 8)
+
+
+```
+
+
+
+
 ```{r, fig.width=12, fig.height=8}
-##-------------------
-#1-celltype
+
+##match the celltype with each cluster specifique
+#---cluster
+
+##marker used to make gice cellname
+genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
+
+
+
+Idents(MS_obj)="seurat_clusters"
+cluster_name_x = c(
+  "0"="Oligodendrocytes_0",
+  "1"="Oligodendrocytes_1",
+  "2"="Oligodendrocytes_2",
+  "3"="Oligodendrocytes_3",
+  "4"="Oligodendrocytes_4",
+  "5"="Astrocytes_5",
+  "6"="Microgalia_6",
+  "7"="Oligodendrocytes_7",
+  "8"="OPC_8",
+  "9"="Neurons_9",
+  "10"="Monocytes/DC_10",
+  "11"="Vascular Cells_11",
+  "12"="Astrocytes_12"
+  ,"13"="Astrocytes_13",
+  "14"="Neurons_14",
+  "15"="Neurons_15",
+  "16"="Astrocytes_16",
+  "17"="Microgalia_17",
+  "18"="Pericytes_18",
+  "19"="Oligodendrocytes_19"
+  )
+MS_obj=RenameIdents(MS_obj, cluster_name_x)
+MS_obj$celltype=Idents(MS_obj)
+
+
+
+p=DotPlot(
+  MS_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+#save
+ggsave(filename = "output/Multiple_Sclerosis/MS_cluster_name.png", plot = p, width = 12, height = 8)
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+
+##-----umap--------------
+
+#1-celltype for the umap
 Idents(MS_obj)="seurat_clusters"
 cluster_name = c(
   "0"="Oligodendrocytes",
@@ -201,6 +299,8 @@ ggsave(filename = "output/Multiple_Sclerosis/MScellT.png", plot = fig1a, width =
 
 
 
+
+
 ```{r,fig.width=10,fig.height=8}
 
 ##plots with the markers 
@@ -222,11 +322,20 @@ p=DotPlot(
   scale.max = NA,
   cluster.idents = T, 
   group.by = "celltype") + RotatedAxis() 
-ggsave(filename = "output/Multiple_Sclerosis/MSmarkers.png", plot = p, width = 12, height = 8)
-
+p
+#ggsave(filename = "output/Multiple_Sclerosis/MSmarkers.png", plot = p, width = 12, height = 8)
 
 
 ```
+
+
+
+
+
+
+
+
+
 
 
 
@@ -269,7 +378,9 @@ ggsave(filename = "output/Multiple_Sclerosis/MSproportion.png", plot = fig1c, wi
 ```
 
 
+
 ```{r}
+
 ##correlation between celltype
 #1 Set identities to cell types
 Idents(MS_obj) = "celltype"
@@ -331,10 +442,10 @@ dev.off()
 ```{r}
 #create a file with the raw_count,processed, the metadata and the active_id
 ##check the information
-levels(MS_obj)
-table(Idents(MS_obj))
-head(MS_obj@meta.data$celltype)
-colnames(MS_obj@meta.data)
+
+MS_obj$orig.ident="Multiple Sclerosis"
+
+
 # Remove column i don't want to keep
 cols_to_remove <- c(
   grep("res_|RNA_snn_res", colnames(MS_obj@meta.data), value = TRUE),
@@ -352,16 +463,20 @@ write.csv(MS_obj@meta.data,
           row.names = TRUE)
 View(MS_obj@meta.data)
 
+
+
+
+
 ```
 
 
 ###Save the process
 ```{r}
 ###save
-#saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
 
 ## run it later to load all 
-MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+#MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
 ```
 
 

@@ -14,6 +14,7 @@ library(pacman)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
 ```
 
 
@@ -22,12 +23,18 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 ##1-load the obj CD45 negative
 ```{r}
 #-----
+
 cd45neg=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45neg_annotated_clean.RDS")
-cd45neg
+#cd45neg
 #to see all annotations
+#colnames(cd45neg@meta.data)
+#p=DimPlot(cd45neg, label = TRUE, reduction = "umap_h")
+#p
+#ggsave("output/SjD/cd45neg/SjD_Resolution.png",plot = p, width = 12, height = 8)
+cd45neg$orig.ident="CD45 -"
+View(cd45neg@meta.data)
 colnames(cd45neg@meta.data)
-p=DimPlot(cd45neg, label = TRUE)
-ggsave("output/SjD/cd45neg/SjDintegration.png",plot = p, width = 12, height = 8)
+
 ```
 
 We have two type of cell_annotattion the :major_annot and specif_annot(look for colnames(cd45neg@meta.data) to see the colnames)
@@ -36,8 +43,48 @@ We have two type of cell_annotattion the :major_annot and specif_annot(look for 
 ###process for the major_annotation#####
 
 ###2 Annotation 
+
+
+```{r, fig.width=14, fig.height=8}
+
+#major_annot for the major celltype ,major_annot_cl for the clusters_number and major_annot joint for the major celltpe and the markers in a dimplot. just need to change alll time the "group.by" 
+
+#major_annot= major_annot_joint
+
+
+#markers________________
+genes = c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
+
+
+p=DotPlot(
+  cd45neg,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "major_annot_cl") + RotatedAxis() 
+p
+#save
+ggsave(filename = "output/SjD/cd45neg/SjD_Major_cluster_name.png", plot = p, width = 14, height = 8) 
+
+
+
+```
+
+
+
+
+
 ```{r}
-##plot for annotations
+##----umap---------
 #1for the major annotation
 
 Idents(cd45neg)="major_annot_joint"
@@ -87,6 +134,8 @@ fig_major=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
   labs(x = "UMAP 1", y = "UMAP 2")
 fig_major
 ggsave("output/SjD/cd45neg/SjD_Major_ann.png", plot = fig_major, width =12, height = 8 )
+
+
 ```
 
 
@@ -132,6 +181,7 @@ fig1c
 ggsave(filename = "output/SjD/cd45neg/SjD_Major_proport.png", plot = fig1c, width = 12, height = 8)
 
 ```
+
 
 
 
@@ -206,6 +256,8 @@ prop_donor_celltype <- cd45neg@meta.data %>%
 ```
 
 
+
+
 ```{r}
 #----plot
 fig = ggplot(
@@ -242,7 +294,41 @@ specific_annot
 
 ##1annotation
 
+
+
+```{r,fig.width=12,fig.height=8}
+#markers________________
+genes = c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
+
+
+p=DotPlot(
+  cd45neg,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "specific_annot_subcl") + RotatedAxis()  #have to be change each time depend on what you want to plot
+p
+#save
+#ggsave(filename = "output/SjD/cd45neg/SjD_specific_ann_cluster_name.png", plot = p, width = 16, height = 8) 
+
+```
+
+
+
+
+
+
 ```{r}
+#-----------------
 ##plot for annotations
 #1for the major annotation
 
@@ -318,6 +404,9 @@ ggsave("output/SjD/cd45neg/SjD_specific_ann.png", plot = fig, width =12, height 
 
 
 
+
+
+
 ###2 proportion of cells
 ```{r}
 #------
@@ -355,6 +444,7 @@ fig1c=ggplot(
   xlab("")
 fig1c
 ggsave(filename = "output/SjD/cd45neg/SjD_specific_ann_Proport.png", plot = fig1c, width = 12, height = 8)
+
 ```
 
 
@@ -413,6 +503,8 @@ dev.off()
 ```
 
 
+
+
 ###4Donor proportions
 ```{r}
 ##------
@@ -425,6 +517,9 @@ prop_donor_celltype <- cd45neg@meta.data %>%
   dplyr::mutate(proportion = n / sum(n)) %>%
   dplyr::ungroup()
 ```
+
+
+
 
 
 ```{r}
@@ -449,15 +544,70 @@ fig
 ggsave("output/SjD/cd45neg/SjD_specific_cell_Donor.png", plot = fig, width = 12, height = 8)
 #
 
+View(cd45neg@meta.data)
 ```
+"orig.ident"                        "nCount_RNA"                        "nFeature_RNA"   "percent.mt"   "seurat_clusters"  "major_annot"    
+
+##save the new meta data
+```{r}
+#-------
+##check the information
+
+
+# change_name
+cd45neg_new <- cd45neg
+
+# 
+cd45neg_new$orig.ident <- "CD45-"
+
+# keep col
+cols_to_keep <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "percent.mt",
+  "seurat_clusters",
+  "specific_annot"
+)
+
+# keep
+cd45neg_new@meta.data <- cd45neg_new@meta.data[, cols_to_keep, drop = FALSE]
+colnames(cd45neg_new@meta.data)[
+  colnames(cd45neg_new@meta.data) == "specific_annot"
+] <- "celltype"
+# save
+saveRDS(cd45neg_new, file = "data/process/SeuratObjects/SjD/cd45neg_new.rds")
+
+#
+cd45neg_new <- readRDS("data/process/SeuratObjects/SjD/cd45neg_new.rds")
+
+# Export CSV (optionnel)
+write.csv(
+  cd45neg_new@meta.data,
+  file = "data/process/SeuratObjects/SjD/cd45neg_new.csv",
+  row.names = TRUE
+)
+
+# Visualisation
+View(cd45neg_new@meta.data)
+
+
+```
+
+
+
+
 
 ##save
 ```{r}
-###
-#saveRDS(cd45neg, file = "data/process/SeuratObjects/SjD/cd45neg_process.rds")
+
+
 
 #load later
-cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_process.rds")
+cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_new.rds")
+
+
+
 ```
 
 
@@ -474,6 +624,16 @@ cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_process.rds")
 
 #####----------------------------------------------------------------------------------------------------------------------------------------------------
 
+
+
+
+
+
+
+
+
+
+
 ####For  major_annot_joint#####
 ##1 load the data annotation for
 ```{r}
@@ -482,12 +642,60 @@ cd45pos=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/D
 
 #colnames
 colnames(cd45pos@meta.data)
-
+View(cd45pos@meta.data)
+"orig.ident"                       "nCount_RNA"                       "nFeature_RNA"   "percent.mt"    "seurat_clusters"   "sample_name"      "major_annot"    
 ```
 
 
 
 ###2annotation
+
+
+```{r, fig.width=20, fig.height=8}
+#marker__________________________
+#to see col to plot 
+colnames(cd45pos@meta.data)
+
+genes = c(
+  "ZG16B","IGHM","IGHD","CCR7","GPR183","TEX9","MYC","KLF6","MIR155HG","ITGB1",
+  "FOXP1","BACH2","CLEC9A","WDFY4","IRF8","CLEC4C","THBD","BATF3","CD1C",
+  "FCER1A","FCGR3A","CD14","CX3CR1","CD163","CD36","FCGR1A","MERTK","CD80",
+  "ZEB2","LAMP3","MRC1","SIRPA","CLEC10A","C1QA","IL1B","IGHA1","IGHG1",
+  "IGHG3","IGHG4","TNF","NCAM1","NKG7","CD27","TRDC","KLRG1","FXYD7","KIT",
+  "AHR","FGFBP2","FCRL6","CD8A","CD8B","MYB","SELL","TOX","IKZF2","HAVCR2",
+  "CTLA4","ZNF683","ITGAE","CXCR6","CCL4L2","CCL4","CCL3","PRDM1","IFNG",
+  "CD69","CCR6","XCL1","XCL2","CCL20","CLEC2B","NR4A1","HSPA6","BAG3",
+  "GZMH","LGALS1","LEF1","TCF7","ANXA2","CD44","GZMA","CCL5","DLGAP1",
+  "RORA","RORC","IL17A","FOXP3","CCR8","TIGIT","TNFRSF9","IL7R","CXCR5",
+  "BCL6","SH2D1A","MAF","CXCL13","IL21","IL2RG","ITGA4","ITGB7"
+)
+
+
+p=DotPlot(
+  cd45pos,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "major_annot_cl") + RotatedAxis() 
+p
+#save
+ggsave(filename = "output/SjD/cd45pos/SjD_Major_ann_cluster_name.png", plot = p, width = 20, height = 8) 
+
+
+```
+
+
+
+
 ```{r}
 ##plot for annotations
 #1for the major annotation
@@ -539,7 +747,7 @@ fig=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
   ) +
   labs(x = "UMAP 1", y = "UMAP 2")
 fig
-ggsave("output/SjD/cd45pos/SjDMajor_ann.png", plot = fig_major, width =12, height = 8 )
+ggsave("output/SjD/cd45pos/SjD_Major_ann.png", plot = fig, width =12, height = 8 )
 
 ```
 
@@ -643,6 +851,8 @@ dev.off()
 ```
 
 
+
+
 ###5Donor proportions
 ```{r}
 ##------
@@ -655,6 +865,8 @@ prop_donor_celltype <- cd45pos@meta.data %>%
   dplyr::mutate(proportion = n / sum(n)) %>%
   dplyr::ungroup()
 ```
+
+
 
 
 ```{r}
@@ -683,6 +895,7 @@ ggsave("output/SjD/cd45pos/SjD_Major_Donor.png", plot = fig, width = 12, height 
 
 
 
+"specific_annot"
 
 
 
@@ -784,6 +997,7 @@ fig=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
   labs(x = "UMAP 1", y = "UMAP 2")
 fig
 ggsave("output/SjD/cd45pos/SjD_specific_ann.png", plot = fig, width =12, height = 8 )
+
 ```
 
 
@@ -825,7 +1039,9 @@ fig1c=ggplot(
   xlab("")
 fig1c
 ggsave(filename = "output/SjD/cd45pos/SjD_specific_cell_proport.png", plot = fig1c, width = 12, height = 8)
+
 ```
+
 
 
 
@@ -884,6 +1100,8 @@ dev.off()
 
 
 
+
+
 ###4Donor proportion
 ```{r}
 ##------
@@ -921,18 +1139,70 @@ fig
 ggsave("output/SjD/cd45pos/SjD_specific_Donor.png", plot = fig, width = 12, height = 8)
 
 ##meta data
-View(cd45pos@meta.data)
+
+cd45pos$orig.ident="CD45 +"
+
+
 ```
+
+
+
+
+##save new meta.dat
+```{r}
+#
+
+# change_name
+cd45pos_new <- cd45pos
+
+# 
+cd45pos_new$orig.ident <- "CD45+"
+
+# keep col
+cols_to_keep <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "percent.mt",
+  "seurat_clusters",
+  "specific_annot"
+)
+
+# keep
+cd45pos_new@meta.data <- cd45pos_new@meta.data[, cols_to_keep, drop = FALSE]
+colnames(cd45pos_new@meta.data)[
+  colnames(cd45pos_new@meta.data) == "specific_annot"
+] <- "celltype"
+
+# save
+saveRDS(cd45pos_new, file = "data/process/SeuratObjects/SjD/cd45pos_new.rds")
+
+#
+cd45pos_new <- readRDS("data/process/SeuratObjects/SjD/cd45pos_new.rds")
+
+# Export CSV (optionnel)
+write.csv(
+  cd45pos_new@meta.data,
+  file = "data/process/SeuratObjects/SjD/cd45pos_new.csv",
+  row.names = TRUE
+)
+
+# Visualisation
+View(cd45pos_new@meta.data)
+
+```
+
 
 
 
 ###save
 ```{r}
 ###
-#saveRDS(cd45pos, file = "data/process/SeuratObjects/SjD/cd45_process.rds")
+
 
 #load later
-readRDS("data/process/SeuratObjects/SjD/cd45_process.rds")
+#cd45pos=readRDS("data/process/SeuratObjects/SjD/cd45pos_new.rds")
+
 ```
 
 

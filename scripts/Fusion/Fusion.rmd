@@ -1,0 +1,311 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+----------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------##Analysis of the Fusion of all autoimmune diseases#------------------------------------------ --------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+```{r setup, include=FALSE}
+##################PACKAGES
+library(pacman)
+  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+```
+
+
+##1load all the data
+```{r}
+#--------process_data
+
+MS = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")  
+RA = readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")        
+SS = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
+IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+SS.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+SS.L = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_new.rds")
+DefaultAssay(cd45neg) = "RNA"
+cd45neg = DietSeurat(cd45neg, assays = "RNA") #delete the SCT assay
+cd45pos=readRDS("data/process/SeuratObjects/SjD/cd45pos_new.rds")
+DefaultAssay(cd45pos) = "RNA"
+cd45pos = DietSeurat(cd45pos, assays = "RNA") #delete the SCT assay
+
+
+```
+
+
+
+##2Merge all 
+```{r}
+#--------fusion
+
+#create list
+objs <- list(
+  MS = MS,
+  RA = RA,
+  SS = SS,
+  IPF.U = IPF.U,
+  IPF.L = IPF.L,
+  T1D = T1D,
+  SS.U = SS.U,
+  SS.L = SS.L,
+  cd45neg = cd45neg,
+  cd45pos = cd45pos
+)
+#
+sample_ids = c("MS","RA","SS","IPF.U","IPF.L",
+  "T1D","SS.U","SS.L","cd45neg","cd45pos")
+#fusion
+Fu = merge(
+  x = objs[[1]],
+  y = objs[-1],           
+  add.cell.ids = sample_ids,  
+  assay = "RNA",         
+  merge.data = FALSE      
+)
+
+library(dplyr)
+#change names
+Fu$orig.ident = recode(Fu$orig.ident,
+                       "minus10" = "CD45-",
+                       "minusB1" = "CD45-",
+                       "minusE"  = "CD45-",
+                       "plus10"  = "CD45+",
+                       "plusB1"  = "CD45+",
+                       "plusE"   = "CD45+")
+#save memory
+ rm(MS,RA,SS,IPF.U,IPF.L,
+  T1D,SS.U,SS.L,cd45neg,cd45pos,objs,sample_ids)
+ gc(full = TRUE)
+ 
+```
+
+
+
+##3THE QC
+```{r, fig.width=12, fig.height=8}
+#save the raw_fusion
+saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_raw.rds")
+Fu=readRDS("data/process/SeuratObjects/Fusion/F_raw.rds")
+
+
+
+```
+
+
+##4Statistics
+```{r}
+#-------
+#Normalize,fvf,pca,scale
+Fu=NormalizeData(Fu)
+Fu=FindVariableFeatures(Fu)
+Fu=ScaleData(Fu, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = Fu))
+Fu=RunPCA(Fu,features = VariableFeatures(object = Fu))
+ElbowPlot(Fu, ndims = 50, reduction = "pca")
+Fu=RunUMAP(Fu,dims = 1:30)
+p=DimPlot(Fu, reduction = "umap",label = TRUE,raster = FALSE)
+
+
+```
+
+##5 integration
+```{r}
+#------integration
+
+library(harmony)
+Fu =RunHarmony(Fu,group.by.vars = "orig.ident",orig.reduction = "pca",dims.use = 1:30  )
+Fu[["RNA"]]=JoinLayers(Fu[["RNA"]])
+Fu = RunUMAP(Fu, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+Reductions(Fu)
+
+```
+
+
+##6 annotation
+```{r}
+#------------celltype
+View(Fu@meta.data)
+#  Fibroblasts_1 to Fibroblasts_5 into "Fibroblasts"
+Fu@meta.data$celltype <- ifelse(
+  grepl("^Fibroblasts_[0-9]+$", Fu@meta.data$celltype),
+  "Fibroblasts",
+  Fu@meta.data$celltype
+)
+#for GC B cells
+Fu@meta.data$celltype <- ifelse(
+  grepl("^GC B cells(_[0-9]+)?$", Fu@meta.data$celltype),
+  "GC B cells",
+  Fu@meta.data$celltype
+)
+
+# List all groups in your dataset
+orig_groups = unique(Fu@meta.data$orig.ident)
+
+
+#list
+celltypes_by_group <- list()
+
+# Loop over each orig.ident group
+for (group in orig_groups) {
+  # Get unique cell types for this group
+  celltypes_by_group[[group]] = unique(Fu@meta.data$celltype[Fu@meta.data$orig.ident == group])
+}
+
+celltype_cols <- c(
+  #-----MS--------------
+    
+"Oligodendrocytes" =           "tomato4",
+"OPC" =                        "tomato",
+"Astrocytes" =                 "mediumblue",
+"Microgalia" =                 "maroon2",
+"Neurons" =                    "mistyrose2",
+"Vascular Cells" =             "olivedrab3",
+"Pericytes" =                  "paleturquoise2",
+"Monocytes/DC" =               "purple",
+
+#---------RA---------
+"Fibroblasts" =                "yellow4",
+"Plasmacytoid DCs" =           "red",
+"Neutrophils" =                "salmon",
+"Macrophages" =                "sienna2",
+"B cells" =                    "yellow1",
+"Endothelial cells" =          "grey51",
+"NK/T cells" =                 "olivedrab1",
+"Dendritic cells" =            "olivedrab",
+"Mast cells" =                 "palevioletred2",
+"Pericytes/Mural cells" =      "indianred4",
+"Plasmablasts" =               "lightpink2",
+
+#--------SS------------
+"Secretory cells"              ="orangered",
+"Neural cells"                 ="red2",
+"Basal Keratinocytes"          ="olivedrab",
+"Keratinocytes"                = "deeppink",
+"Macrophages/DC"               = "cyan4",
+"Terminal Keratinocytes"       = "seagreen1",
+"Smooth Muscle cells"          = "slateblue2"  ,  
+"Melanocytes"                  = "orangered4",
+
+#------Idiopathic P. Fibrosis in Upper Lung-------
+"NK cells"                     = "brown2",
+"Cytotoxic T"                  = "cadetblue1",
+"Aveolar Type 2"               = "aquamarine",
+"Venous Endothelial"           = "chocolate1",
+"Arterial Endothelial"         = "cadetblue",
+"Proliferating cells"          = "coral1",
+"Goblet cells"                 = "cornflowerblue",
+"Monocytes"                    = "darksalmon",
+"Lymphatic Endothelial"        = "gray0",
+"B Lymphocytes"                = "ivory1",
+"Ciliated cells"               =  "saddlebrown",            
+
+#----------Idiopathic P.Fibrosis in Lower Lung------------
+"Basal cells"                  = "indianred3" ,             
+
+#-----Type 1 Diabetes-------
+"Ductal cells"                = "magenta",
+"Acinar cells"                = "mediumorchid3",
+"Alpha cells"                 = "mediumorchid1",
+"Stellate cells"              = "moccasin",
+"Beta cells"                  = "magenta4",
+
+#--------SScILD in Upper lung--------
+"Myeloid cells"               = "tomato1",
+"Capillary Endothelial"      = "red3" ,
+
+#------SScILD in Low lung-------
+"Plasma cells"               = "skyblue1",
+
+#---- CD45- -----------
+"CCL14 Venous Endothelial"             = "gold1",
+"Immunopericytes"                      = "gold3",
+"Epithelial Progenitor cells"          = "gainsboro",
+"Capillary pericytes"                  = "orange4",
+"Intercalated Ductal Epithelial cells" = "palevioletred2",
+"Seromucous Acinar Epithelial cells"   = "thistle",
+"Neuronal cells"                       = "wheat",
+"Serous Acinar Epithelial cells"       = "mistyrose",
+"Immunofibroblasts"                    = "paleturquoise4",
+"Endothelial Progenitors"              = "rosybrown1",
+"Myoepithelial cells"                  = "lightgoldenrod3",
+"VSMC"                                 = "orange1",
+"Mucous Acinar Epithelial cells"       = "palevioletred",
+"SPARC+ COL3A1+ Fibroblasts"           = "yellow",
+"Basal Epithelial cells"               = "aquamarine",
+"Striated Ductal Epithelial cells"     = "azure2",
+"Ionocytes"                            = "darkmagenta",
+
+#------------- CD45+ ----------
+"cDC2"                              = "darkolivegreen3",
+"CD27+ NK cells"                    = "cyan" ,
+"Naive CD8+ T cells"                = "darkcyan",
+"IgA Plasma cells"                  = "deeppink4",
+"M2 Macrophages"                    = "dodgerblue4",
+"CD56+ NK cells"                    = "goldenrod4",
+"CD8+ Trm"                          = "lightsalmon",
+"Cytotoxic Th cells"                = "peachpuff",
+"Infiltrating CD8+ T cells"         = "turquoise4",
+"Exhausted CD8+ T cells"            = "darkkhaki",
+"Exhausted IEG CD8+ T cells"        = "antiquewhite2",
+"Recruited Activated CD8+ T cells"  = "beige",
+"CD8+ Tcm"                          = "darkseagreen1",
+"Naive Th cells"                    = "goldenrod3",
+"Activated Treg cells"              = "grey72",
+"Memory Th cells"                   = "lightcoral",
+"CD8+ Tem"                          = "mediumturquoise",
+"IgG1 Plasma cells"                 = "papayawhip",
+"gd-T cells"                        = "saddlebrown",
+"CD16+ NK cells"                    = "thistle3",
+"IgG3/4 Plasma cells"               = "pink3",
+"TNF+ Plasma cells"                 = "seagreen4",
+"IgM Plasma cells"                  = "violetred2",
+"GC B cells"                        = "yellow3",
+"Migrating Th17 cells"              = "lightsalmon",
+"LTB+ Th17 cells"                   = "midnightblue",             
+"Naive Tfh cells"                   = "darkred",
+"Inflammatory CD8+ T cells"         = "green",
+"Recruiting Effector CD8+ Trm"      = "cornsilk1",
+"Mo-DC"                             = "dimgrey",
+"LAMP3+ cDCs"                       = "maroon",
+"Resting Treg cells"                = "seagreen",
+"M1 Macrophages"                    = "orchid",
+"Naive B cells"                     = "lemonchiffon1",
+"inflammatory cDC2"                 = "royalblue3",
+"Tph17"                             = "aliceblue",
+"Secretory Tph cells"               = "antiquewhite2",
+"cDC1"                              = "peru",
+"ILCs"                              = "slategray",
+"CD62L+ TPEx"                       = "orangered2",
+"DLGAP1+ Th cells"                  = "black"
+) 
+
+View(Fu@meta.data) 
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+#--------save
+saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
+#load-----later
+Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
+
+```
+
+
+
+
+

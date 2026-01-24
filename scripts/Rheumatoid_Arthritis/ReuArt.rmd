@@ -58,10 +58,15 @@ obj2=subset(obj2,subset=nFeature_RNA>100 & nFeature_RNA<8000 & percent.mt<20)
 ##merge
 RA_obj = merge(obj1, y = obj2, add.cell.ids = c("RA1", "RA2"))
 saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_raw.rds")
+RA_obj=readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_raw.rds")
 #save memorie
 rm(obj1,obj2,RA1,RA2)
 gc(full = TRUE)
 
+#look for the assay if not RNA set it as RNA
+DefaultAssay(RA_obj) 
+#if not 
+DefaultAssay(RA_obj) <- "RNA"
 ```
 
 
@@ -156,14 +161,93 @@ pheatmap(
 
 
 ###5-Annotation
-```{r}
-##marker
 
-genes=c("LUM","DCN","CCDC80","RPL13A","LTB","RPL21","HLA-DRB1","HLA-DQA1","HLA-DQB1","NR2F2","NOTCH3","TAGLN","CD68","CTSB","MS4A7","PLVAP","EMCN","S100A9","S100A8","NAMPT","IL32","HCST","DUSP2","CPA3","HPGD","CTSG","IGHG3","IGHG1","HSP90B1","PPP1R14B","SOX4","GZMB")
-##
+
+```{r, fig.width=10, fig.height=8}
+#------
+genes=c("LUM","DCN","CCDC80","RPL13A","LTB","CD37","MS4A1","RPL21","HLA-DRB1","HLA-DQA1","HLA-DQB1","NR2F2","NOTCH3","TAGLN","CD68","CTSB","MS4A7","PLVAP","EMCN","S100A9","S100A8","NAMPT","IL32","HCST","DUSP2","CPA3","HPGD","CTSG","IGHG3","IGHG1","HSP90B1","PPP1R14B","SOX4","GZMB")
+
+
+p=DotPlot(
+  RA_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "harmony_clusters") + RotatedAxis() 
+p
+ggsave(filename = "output/Rheumatoid_Arthritis/RAcluster.png", plot = p, width = 12, height = 8)
+
+```
+
+
+
+```{r}
+#--------
+#cluster_specifique_name
+
+Idents(RA_obj)="harmony_clusters"
+cluster_name_x=c(
+  "0"  = "Macrophages_0",
+  "1"  = "Fibroblasts_1",
+  "2"  = "Bcells_2",
+  "3"  = "Fibroblasts_3",
+  "4"  = "Neutrophils_4",
+  "5"  = "NK/T cells_5",
+  "6"  = "Endothelial cells_6",
+  "7"  = "Mast cells_7",
+  "8"  = "Fibroblasts_8",
+  "9"  = "Plasmacytoid DCs_9",
+  "10" = "Bcells_10",
+  "11" = "Plasmablasts_11",
+  "12" = "Dendritic cells_12",
+  "13" = "Pericytes/Mural cells_13"
+  )
+#-------------
+RA_obj=RenameIdents(RA_obj, cluster_name_x)
+RA_obj$celltype=Idents(RA_obj)
+
+#plot
+p=DotPlot(
+  RA_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+p
+ggsave(filename = "output/Rheumatoid_Arthritis/RA_cluster_name.png", plot = p, width = 12, height = 8)
+
+```
+
+
+
+
+
+```{r}
+
+#-------umap-----------
+#---cluster_name
+
 Idents(RA_obj)="harmony_clusters"
 cluster_name=c(
-  "0"  = "Fibroblasts",
+  "0"  = "Macrophages",
   "1"  = "Fibroblasts",
   "2"  = "B cells",
   "3"  = "Fibroblasts",
@@ -192,8 +276,9 @@ celltype_cols=c(
   "Plasmacytoid DCs"             = "#984EA3",  
   "Plasmablasts"                 = "#E69F00",
   "Dendritic cells"              = "#E7298A",
-  "Pericytes/Mural cells"        = "#000000"
-   )
+  "Pericytes/Mural cells"        = "#000000",
+   "Macrophages"                 = "#762A83"
+  )
 
 ##3 center
 ##3 center
@@ -263,6 +348,7 @@ p=DotPlot(
   group.by = "celltype") + RotatedAxis()
 p
 ggsave(filename = "output/Rheumatoid_Arthritis/RAmarkers.png", plot = p, width = 12, height = 8)
+
 ```
 
 
@@ -439,7 +525,8 @@ cols_to_remove=c(
   "cell_type",
   "iscell_ed",
   "iscell_dd",
-  "Donors"
+  "Donors",
+  "seurat_clusters"
 )
 RA_obj@meta.data=RA_obj@meta.data[, !(colnames(RA_obj@meta.data) %in% cols_to_remove)]
 
@@ -457,12 +544,15 @@ write.csv(RA_obj@meta.data,
           file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_obj.metadata.csv",
           row.names = TRUE)
 View(RA_obj@meta.data)
+
 ```
+
+
 
 
 ```{r}
 ###save
-#saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
+saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
 
 ## run it later to load all 
 #RA_obj = readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")

@@ -83,6 +83,12 @@ SS_obj=merge(
   project = "Systemic_Sclerosis"
 )
 saveRDS(SS_obj,file = "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_raw.rds")
+
+#look for the assay if no RNA seet it as RNA
+SS_obj=readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_raw.rds")
+DefaultAssay(SS_obj)
+
+#save memory
 rm(eout,meta,SS,SS_list,SS.x,h5.files,i,iscell_ed,iscell_dd,keep,rds.files,sample.names)
 gc(full = TRUE)
 ```
@@ -187,12 +193,94 @@ View(SS_markers)
 | **Secretory cells – CA6⁺**             | KRT19, SNORC                        |
 | **Secretory cells – SCGB2A2⁺**         | SCGB2A2, MUCL1                      |
 | **Secretory cells – SCGB1D2⁺**         | CALML5                              |
+    
+    
+```{r}
+genes = c("KRT1","KRT14","KRT5","KRT17","RGS5","KRT6A","KRT6B","KRT2","SFRP2","COMP","APOD","HLA-DRA","APOE","POSTN","ANGPTL7","COCH","ASPN","CD3D","GNLY","CD4","CD1C","CCL3","CCL19","TPSAB1","FTH1","IGHG3","MS4A1","STEAP4","GEM","TAGLN","RERGL","CXCR4","DES","PLP1","PMP22","MKI67","TYRP1","PMEL","APOC1","APMAP","LOR","SPRR2G","MPZ","MBP","VWF","RAMP2","CCL21","CLDN5","KRT19","SNORC","CALML5")
+
+
+p=DotPlot(
+  SS_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "harmony_clusters") + RotatedAxis() 
+
+#save
+ggsave(filename = "output/Systemic_Sclerosis_in_Skin/SScluster.png", plot = p, width = 12, height = 8)
+
+```
+    
+    
+    
+    
+```{r}
+#------cluster_specifique_name
+
+##1celltype
+Idents(SS_obj)="harmony_clusters"
+cluster_name_x=c(
+  "0"  = "Terminal Keratinocytes_0" ,
+  "1"  = "Fibroblasts_1"    ,
+  "2"  = "Basal Keratinocytes_2"            ,
+  "3"  = "Endothelial cells_3"      ,
+  "4"  = "Basal Keratinocytes_4"    ,
+  "5"  = "Pericytes_5"            ,
+  "6"  = "Macrophages/DC_6"          ,
+  "7"  = "NK/T cells_7"               ,
+  "8"  = "Pericytes_8"                ,
+  "9"  = "Fibroblasts_9"              ,
+  "10" = "Basal Keratinocytes_10"        ,
+  "11" = "Secretory cells_11"           ,
+  "12" = "Smooth Muscle cells_12"    ,
+  "13" = "Neural cells_13"           ,
+  "14" = "Mast cells_14"             ,
+  "15" = "Keratinocytes_15"            ,
+  "16" = "Melanocytes_16"          ,         
+  "17" ="Endothelial cells_17"    
+)
+
+SS_obj=RenameIdents(SS_obj, cluster_name_x)
+SS_obj$celltype=Idents(SS_obj)
+
+p=DotPlot(
+  SS_obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+p
+#save
+ggsave(filename = "output/Systemic_Sclerosis_in_Skin/SS_cluster_name.png", plot = p, width = 12, height = 8)
+
+```
+    
+    
+    
                        
 
 ```{r, fig.width=10,fig.height=8}
-##based on markers
-genes = c("KRT1","KRT14","KRT5","KRT17","RGS5","KRT6A","KRT6B","KRT2","SFRP2","COMP","APOD","HLA-DRA","APOE","POSTN","ANGPTL7","COCH","ASPN","CD3D","GNLY","CD4","CD1C","CCL3","CCL19","TPSAB1","FTH1","IGHG3","MS4A1","STEAP4","GEM","TAGLN","RERGL","CXCR4","DES","PLP1","PMP22","MKI67","TYRP1","PMEL","APOC1","APMAP","LOR","SPRR2G","MPZ","MBP","VWF","RAMP2","CCL21","CLDN5","KRT19","SNORC","CALML5")
-  
+
+#------umap-----
+
 ##1celltype
 Idents(SS_obj)="harmony_clusters"
 cluster_name=c(
@@ -218,6 +306,7 @@ cluster_name=c(
 
 SS_obj=RenameIdents(SS_obj, cluster_name)
 SS_obj$celltype=Idents(SS_obj)
+
 ##2color
 celltype_cols=c(
   "Terminal Keratinocytes"  = "#D73027",  
@@ -467,7 +556,8 @@ cols_to_remove=c(
   "cell_type",
   "iscell_ed",
   "iscell_dd",
-  "Donors"
+  "Donors",
+  "seurat_clusters"
 )
 SS_obj@meta.data=SS_obj@meta.data[, !(colnames(SS_obj@meta.data) %in% cols_to_remove)]
 
@@ -498,7 +588,7 @@ View(SS_obj@meta.data)
 #saveRDS(SS_obj, file = "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
 
 ## run it later to load all 
-SS_obj = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
+#SS_obj = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
 ```
 
 

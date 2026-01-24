@@ -102,6 +102,7 @@ gc(full = TRUE)
 ```{r,fig.width=10,fig.height=8}
 ##qc
 IPF.U=readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_U.rds")
+DefaultAssay(IPF.U) # if not RNA set it as RNA
 IPF.U[["percent.mt"]]=PercentageFeatureSet(IPF.U,pattern = "^MT-")
 Idents(IPF.U)="IPF_Upper"
 VlnPlot(IPF.U, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE)
@@ -220,9 +221,92 @@ Pericyte :"PDGFRB", "RGS5", "FAM162B"
 Mesothelial :"MSLN","UPK3B"
 Proliferating Cells :"TOP2A", "BIRC5", "UBE2C", "MKI67" X
 
+
+```{r}
+#-------marker-----
+genes=c("AIF1","PTPRC","FABP4","SPP1","FCGR1A","INHBA","FCN1", "IL1B", "CD14","FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD3D", "CD8A", "CD8B","CCR7", "LEF1","FOXP3","NKG7", "KLRF1","MS4A1", "CD79A","NRP1", "IL3RA","EPCAM","PDPN","SFTPC", "SFTPD", "MUC1","KRT15", "KRT17","COL1A1","FN1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "VWF", "PECAM1", "CLDN5","GJA5","DKK2","FCN3", "SEMA3G","PLVAP","MPZL2","POSTN" ,"ACKR1", "SELE","CCL21", "PROX1","LUM","COL1A2","CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "FAM162B" ,"MSLN","UPK3B","TOP2A", "BIRC5", "UBE2C")
+
+#plot
+p=DotPlot(
+  IPF.U,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "harmony_clusters") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPFcluster.png", plot = p, width = 20, height = 10)
+ 
+```
+
+
+
+```{r}
+#----cluster_specifique_name
+Idents(IPF.U)="harmony_clusters"
+cluster_name_x=c(
+  "0"  = "Macrophages_0"                  ,
+  "1"  = "Macrophages_1"                   ,
+  "2"  = "Cytotoxic T_2"                   ,
+  "3"  = "Venous Endothelial_3"            ,
+  "4"  = "Monocytes_4"                     ,
+  "5"  = "NK cells_5"                       ,
+  "6"  = "B Lymphocytes_6"                    ,
+  "7"  = "Arterial Endothelial_7"            ,
+  "8"  = "Goblet cells_8"                          ,
+  "9"  = "Fibroblasts_9"                     ,
+  "10" = "Aveolar Type2_10"                  ,          
+  "11" = "Mast cells_11"                      ,
+  "12" = "Macrophages_12"                     ,
+  "13" = "Smooth Muscle cells_13"             ,
+  "14" = "Proliferating cells_14"             ,
+  "15" = "Aveolar Type2_15"                  ,
+  "16" = "Lymphatic Endothelial_16"          ,
+  "17" = "Ciliated cells_17"      
+  
+)
+
+IPF.U=RenameIdents(IPF.U, cluster_name_x)
+IPF.U$celltype=Idents(IPF.U)
+
+#plot
+p=DotPlot(
+  IPF.U,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "celltype") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Upper/IPF_cluster_name.png", plot = p, width = 20, height = 10)
+
+```
+
+
+
+
+
+
+
 ```{r,fig.width=12, fig.height=8}
 
-genes=c("AIF1","PTPRC","FABP4","SPP1","FCGR1A","INHBA","FCN1", "IL1B", "CD14","FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD3D", "CD8A", "CD8B","CCR7", "LEF1","FOXP3","NKG7", "KLRF1","MS4A1", "CD79A","NRP1", "IL3RA","EPCAM","PDPN","SFTPC", "SFTPD", "MUC1","KRT15", "KRT17","COL1A1","FN1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "VWF", "PECAM1", "CLDN5","GJA5","DKK2","FCN3", "SEMA3G","PLVAP","MPZL2","POSTN" ,"ACKR1", "SELE","CCL21", "PROX1","LUM","COL1A2","CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "FAM162B" ,"MSLN","UPK3B","TOP2A", "BIRC5", "UBE2C")
+#---------umap--------
 
 
 ##1celltype
@@ -236,7 +320,7 @@ cluster_name=c(
   "5"  = "NK cells"                       ,
   "6"  = "B Lymphocytes"                    ,
   "7"  = "Arterial Endothelial"            ,
-  "8"  = "Goblet"                          ,
+  "8"  = "Goblet cells"                          ,
   "9"  = "Fibroblasts"                     ,
   "10" = "Aveolar Type 2"                  ,          
   "11" = "Mast cells"                      ,
@@ -245,7 +329,7 @@ cluster_name=c(
   "14" = "Proliferating cells"             ,
   "15" = "Aveolar Type 2"                  ,
   "16" = "Lymphatic Endothelial"          ,
-  "17" = "Ciliated"      
+  "17" = "Ciliated cells"      
   
 )
 
@@ -264,9 +348,9 @@ celltype_cols <- c(
   "Venous Endothelial"    = "#FF7F00",  
   "Arterial Endothelial"  = "#1B9E77",  
   "Lymphatic Endothelial" = "#F781BF",  
-  "Goblet"                = "#8DD3C7",
+  "Goblet cells"          = "#8DD3C7",
   "Aveolar Type 2"        = "#E41A1C",  
-  "Ciliated"              = "#B15928",  
+  "Ciliated cells"        = "#B15928",  
   "Proliferating cells"   = "#999999"   
 )
 
@@ -596,7 +680,9 @@ cols_to_remove=c(
   grep("res_|RNA_snn_res", colnames(IPF.U@meta.data), value = TRUE),
   "cell_type",
   "iscell_ed",
-  "iscell_dd"
+  "iscell_dd",
+  "seurat_clusters",
+  "Donors"
 )
 IPF.U@meta.data=IPF.U@meta.data[, !(colnames(IPF.U@meta.data) %in% cols_to_remove)]
 
@@ -618,12 +704,13 @@ View(IPF.U@meta.data)
 
 
 
+
 ###save
 ```{r}
-#saveRDS(IPF.U, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+saveRDS(IPF.U, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
 
 ## run it later to load all 
-IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
+#IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
 ```
 
 
@@ -662,6 +749,7 @@ IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/
 ##qc---------
 
 IPF.L=readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF_L.rds")
+DefaultAssay(IPF.L) # if not RNA set is as RNA
 IPF.L[["percent.mt"]]=PercentageFeatureSet(IPF.L,pattern = "^MT-")
 Idents(IPF.L)="x"
 IPF.L$x="All"
@@ -749,13 +837,96 @@ pheatmap(correlation_matrixIPF,
 
 ###5-annotation
 
-```{r, fig.width=14, fig.height=8}
-
+```{r}
 ##marker------
 
 genes=c("AIF1","PTPRC","FABP4","SPP1","FCGR1A","INHBA","FCN1", "IL1B", "CD14","FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD3D", "CD8A", "CD8B","CCR7", "LEF1","FOXP3","NKG7", "KLRF1","MS4A1", "CD79A","NRP1", "IL3RA","EPCAM","PDPN","SFTPC", "SFTPD", "MUC1","KRT15", "KRT17","COL1A1","FN1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "VWF", "PECAM1", "CLDN5","GJA5","DKK2","FCN3", "SEMA3G","PLVAP","MPZL2","POSTN" ,"ACKR1", "SELE","CCL21", "PROX1","LUM","COL1A2","CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "FAM162B" ,"MSLN","UPK3B","TOP2A", "BIRC5", "UBE2C")
 
 
+###with the markers
+p=DotPlot(
+  IPF.L,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "harmony_clusters") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPFcluster.png", plot = p, width = 16, height = 8)
+```
+
+
+
+```{r}
+#---cluster_specifique_annotation---
+
+##1celltype
+Idents(IPF.L)="harmony_clusters"
+cluster_name_x=c(
+  "0"  = "Macrophages_0"                                     ,
+  "1"  = "Venous Endothelial_1"                   ,
+  "2"  = "Fibroblasts_2"                                     ,
+  "3"  = "Cytotoxic T_3"                                     ,
+  "4"  = "Secretory cells_4"                                     ,
+  "5"  = "Monocytes_5"                                     ,
+  "6"  = "Cytotoxic T_6"                          ,
+  "7"  = "Mast cells_7"                           ,
+  "8"  = "Aveolar Type2_8"                                     ,
+  "9"  = "Ciliated cells_9"                                     ,
+  "10" = "Basal cells_10"                                     ,          
+  "11" = "Macrophages_11"                                   ,
+  "12" = "Macrophages_12"                                     ,
+  "13" = "Smooth Muscle cells_13"                                     ,
+  "14" = "Venous Endothelial_14"                   ,
+  "15" = "Fibroblasts_15"                                     ,
+  "16" = "B Lymphocytes_16"                                     ,
+  "17" = "Proliferating cells_17"                                     ,    
+  "18" = "Lymphatic Endothelial_18"  
+)
+
+IPF.L=RenameIdents(IPF.L, cluster_name_x)
+IPF.L$celltype=Idents(IPF.L)
+
+#plot
+p=DotPlot(
+  IPF.L,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T ,
+  group.by = "celltype") + RotatedAxis() 
+ p 
+ggsave(filename = "output/Idiopathic Pulmonary Fibrosis/Low/IPF_cluster_name.png", plot = p, width = 16, height = 8)
+
+```
+
+
+
+
+
+
+
+
+
+```{r, fig.width=14, fig.height=8}
+
+##------umap--------
 
 
 ##1celltype
@@ -770,8 +941,8 @@ cluster_name=c(
   "6"  = "Cytotoxic T"                          ,
   "7"  = "Mast cells"                           ,
   "8"  = "Aveolar Type 2"                                     ,
-  "9"  = "Ciliated"                                     ,
-  "10" = "Basal"                                     ,          
+  "9"  = "Ciliated cells"                                     ,
+  "10" = "Basal cells"                                     ,          
   "11" = "Macrophages"                                     ,
   "12" = "Macrophages"                                     ,
   "13" = "Smooth Muscle cells"                                     ,
@@ -796,9 +967,9 @@ celltype_cols = c(
   "Mast cells"            = "#FFD92F",  # yellow
   
   "Aveolar Type 2"        = "#A6CEE3",  # light blue
-  "Ciliated"              = "#000000",  # black
+  "Ciliated cells"        = "#000000",  # black
   "Secretory cells"       = "#FB9A99",  # pink
-  "Basal"                 = "#CAB2D6",  # lavender
+  "Basal cells"           = "#CAB2D6",  # lavender
   "Proliferating cells"   = "#FFFF99",  # pale yellow
   
   "Smooth Muscle cells"   = "#8B0000",  # dark red
@@ -1052,7 +1223,8 @@ cols_to_remove=c(
   "iscell_ed",
   "iscell_dd",
   "Donors",
-  "x"
+  "x",
+  "seurat_clusters"
 )
 IPF.L@meta.data=IPF.L@meta.data[, !(colnames(IPF.L@meta.data) %in% cols_to_remove)]
 
@@ -1078,10 +1250,10 @@ View(IPF.L@meta.data)
 
 ```{r}
 ##save
-#saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+saveRDS(IPF.L, file = "data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
 
 ## run it later to load all 
-IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
+#IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
 ```
 
 ```
