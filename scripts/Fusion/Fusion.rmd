@@ -458,9 +458,9 @@ dev.off()
 
 ```{r}
 #--------save
-saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
+#saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
 #load-----later
-#Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
+Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
 
 ```
 
