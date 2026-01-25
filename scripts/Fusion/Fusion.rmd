@@ -127,10 +127,13 @@ Reductions(Fu)
 ```
 
 
+
+
 ##6 annotation
 ```{r}
 #------------celltype
-View(Fu@meta.data)
+
+
 #  Fibroblasts_1 to Fibroblasts_5 into "Fibroblasts"
 Fu@meta.data$celltype <- ifelse(
   grepl("^Fibroblasts_[0-9]+$", Fu@meta.data$celltype),
@@ -143,26 +146,37 @@ Fu@meta.data$celltype <- ifelse(
   "GC B cells",
   Fu@meta.data$celltype
 )
-
+#-----extract all the celltype
 # List all groups in your dataset
 orig_groups = unique(Fu@meta.data$orig.ident)
 
 
-#list
-celltypes_by_group <- list()
+#extract all celltype
+celltypes_by_group <- lapply(orig_groups, function(group) {
+  unique(Fu@meta.data$celltype[Fu@meta.data$orig.ident == group])
+})
 
-# Loop over each orig.ident group
-for (group in orig_groups) {
-  # Get unique cell types for this group
-  celltypes_by_group[[group]] = unique(Fu@meta.data$celltype[Fu@meta.data$orig.ident == group])
+# Name the list by disease/sample
+names(celltypes_by_group) <- orig_groups
+
+# Print nicely
+for (group in names(celltypes_by_group)) {
+  cat("====", group, "====\n")
+  print(celltypes_by_group[[group]])
+  cat("\n")
 }
 
+#-------______----------------
+
+
+#color
+Idents(Fu) <- "celltype"
 celltype_cols <- c(
   #-----MS--------------
     
 "Oligodendrocytes" =           "tomato4",
 "OPC" =                        "tomato",
-"Astrocytes" =                 "mediumblue",
+"Astrocytes" =                 "sienna",
 "Microgalia" =                 "maroon2",
 "Neurons" =                    "mistyrose2",
 "Vascular Cells" =             "olivedrab3",
@@ -179,7 +193,7 @@ celltype_cols <- c(
 "NK/T cells" =                 "olivedrab1",
 "Dendritic cells" =            "olivedrab",
 "Mast cells" =                 "palevioletred2",
-"Pericytes/Mural cells" =      "indianred4",
+"Pericytes/Mural cells" =      "indianred",
 "Plasmablasts" =               "lightpink2",
 
 #--------SS------------
@@ -201,7 +215,7 @@ celltype_cols <- c(
 "Proliferating cells"          = "coral1",
 "Goblet cells"                 = "cornflowerblue",
 "Monocytes"                    = "darksalmon",
-"Lymphatic Endothelial"        = "gray0",
+"Lymphatic Endothelial"        = "brown3",
 "B Lymphocytes"                = "ivory1",
 "Ciliated cells"               =  "saddlebrown",            
 
@@ -246,7 +260,7 @@ celltype_cols <- c(
 "CD27+ NK cells"                    = "cyan" ,
 "Naive CD8+ T cells"                = "darkcyan",
 "IgA Plasma cells"                  = "deeppink4",
-"M2 Macrophages"                    = "dodgerblue4",
+"M2 Macrophages"                    = "orchid3",
 "CD56+ NK cells"                    = "goldenrod4",
 "CD8+ Trm"                          = "lightsalmon",
 "Cytotoxic Th cells"                = "peachpuff",
@@ -267,7 +281,7 @@ celltype_cols <- c(
 "IgM Plasma cells"                  = "violetred2",
 "GC B cells"                        = "yellow3",
 "Migrating Th17 cells"              = "lightsalmon",
-"LTB+ Th17 cells"                   = "midnightblue",             
+"LTB+ Th17 cells"                   = "yellow2",             
 "Naive Tfh cells"                   = "darkred",
 "Inflammatory CD8+ T cells"         = "green",
 "Recruiting Effector CD8+ Trm"      = "cornsilk1",
@@ -282,12 +296,157 @@ celltype_cols <- c(
 "cDC1"                              = "peru",
 "ILCs"                              = "slategray",
 "CD62L+ TPEx"                       = "orangered2",
-"DLGAP1+ Th cells"                  = "black"
+"DLGAP1+ Th cells"                  = "seagreen1"
 ) 
 
-View(Fu@meta.data) 
+
 
 ```
+
+
+
+
+```{r}
+#----Plot-----with_the_celltype--------
+
+
+# Plain UMAP plot (no labels yet)
+p <- DimPlot(
+  Fu,
+  reduction = "umap.harmony",
+  group.by = "celltype",
+  label = FALSE,       # no labels here
+  cols = celltype_cols,
+  raster = TRUE
+) +
+  NoLegend() +          # remove legend
+  theme(aspect.ratio = 1)
+
+# Add cluster labels with white color and more spacing
+p_labeled <- LabelClusters(
+  plot = p,
+  id = "celltype",
+  repel = TRUE,
+  box = TRUE,
+  max.overlaps = 1000,   # attempt to label all clusters
+  color = "black",       # make labels white
+  force = 2,             # increases spacing between labels
+  box.padding = 0.5      # more space around label boxes
+) +
+  labs(title = NULL)      # remove "celltype" title
+
+# Save
+png("output/Fusion/F_cellType.png",
+    width = 4000, height = 3500, res = 200)
+print(p_labeled)
+dev.off()
+
+```
+
+
+```{r}
+
+#---plot---with_the_DISEASE_type---------
+
+# Rename orig.ident (already done)
+Fu$orig.ident <- recode(Fu$orig.ident,
+  "Multiple Sclerosis"                   = "MS",
+  "Rheumatoid Arthritis"                 = "RA",
+  "Systemic Sclerosis in Skin"           = "SS",
+  "Idiopathic P. Fibrosis in Upper Lung" = "IPF.Up",
+  "Idiopathic P.Fibrosis in Lower Lung"  = "IPF.Low",
+  "Type 1 Diabete"                       = "T1D", 
+  "SScILD in Upper lung"                 = "SScILD.U",
+  "SScILD in Low lung"                   = "SScILD.L"
+)
+
+# Convert to factor without a name
+Fu$orig.ident <- factor(Fu$orig.ident)
+names(attributes(Fu$orig.ident)$levels) <- NULL   # removes the legend title
+
+# Set Idents
+Idents(Fu) <- "orig.ident"
+
+# Define colors
+disease_colors <- c(
+  "MS"       = "orange",
+  "RA"       = "red3",
+  "SS"       = "yellow",
+  "IPF.Up"   = "cyan4",
+  "IPF.Low"  = "blue",
+  "T1D"      = "olivedrab1",
+  "SScILD.U" = "rosybrown1",
+  "SScILD.L" = "tomato",
+  "CD45-"    = "magenta",
+  "CD45+"    = "magenta"
+)
+
+# UMAP plot
+P <- DimPlot(
+  Fu,
+  reduction = "umap.harmony",
+  group.by = "orig.ident",
+  label = FALSE,
+  cols = disease_colors,
+  raster = TRUE
+) +
+  theme(
+    aspect.ratio = 1,
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  labs(title = NULL) # Removes the default title
+
+P
+ggsave(filename = "output/Fusion/F_disease.png", plot = P, height = 8, width = 12)
+
+
+
+```
+
+
+##7Correlation
+```{r}
+#------
+Idents(Fu) <- "orig.ident"
+
+# 2️⃣ Average expression per cell type
+av.expSS <- AverageExpression(
+  Fu,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+# rows = genes, columns = cell types
+
+# 3️⃣ Cell-type correlation matrix
+correlation_matrixSS <- cor(
+  as.matrix(av.expSS),
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrixSS[is.na(correlation_matrixSS)]=0
+
+mcol <- colorRampPalette(c("white", "darkblue", "red"))(100)
+
+pheatmap(
+  correlation_matrixSS,
+  clustering_method = "ward.D2",
+  color = mcol,
+  border_color = NA,
+  fontsize_row = 10,
+  fontsize_col = 10,
+  display_numbers = FALSE,
+  filename = "output/Fusion/F_correlation.png", 
+  width = 12,   # in inches
+  height = 10
+)
+dev.off()
+
+```
+
+
+
 
 
 
@@ -301,7 +460,7 @@ View(Fu@meta.data)
 #--------save
 saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
 #load-----later
-Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
+#Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
 
 ```
 
