@@ -10,19 +10,29 @@ output: html_notebook
 
 ## packages
 ```{r setup, include=FALSE}
+
 ##################PACKAGES
-library(pacman)
-  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,hdf5r,DropletUtils)
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
 ```
 
 
 
-####STEP-1
 
-###load the data
+
+###1load the data
 ```{r}
 ##load data,create seurat obj for each one and merge theme in lower and upper lung
 #1-L for Lower lung and U for Upper lung
@@ -157,10 +167,10 @@ saveRDS(SS.L, "data/process/SeuratObjects/SScILD/Low/SS.L.rds")
 
 
 
-###STEP-2-Analysis Upper lung------------------
 
-###1-qc
-```{r, fig.width=12, fig.height=8}
+
+###2-qc
+```{r}
 #load the data 
 SS.U=readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U.rds")
 DefaultAssay(SS.U) # if not RNA set it as RNA
@@ -169,10 +179,11 @@ Idents(SS.U)="x"
 SS.U$x="All"
 VlnPlot(SS.U,features =c("nCount_RNA","nFeature_RNA","percent.mt"),ncol = 3,log = TRUE)
 SS.U=subset(SS.U,subset=nFeature_RNA>300 & nFeature_RNA<7000 & percent.mt<15)
+
 ```
 
 
-###2 statistics
+###3 statistics
 ```{r}
 ##norm, fvf,scale,runpca
 
@@ -187,15 +198,14 @@ SS.U=RunUMAP(SS.U, dims = 1:30)
 ```
 
 
-###3-integration
+###4-integration
 ```{r}
 ##integration
 library(harmony)
 SS.U =RunHarmony(SS.U,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
 SS.U[["RNA"]]=JoinLayers(SS.U[["RNA"]])
 SS.U = RunUMAP(SS.U, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-p=DimPlot(SS.U,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
-ggsave(filename = "output/SScILD/Upper/SS.Uintegration.png", plot=p, width = 12, height = 8)
+
 
 
 #for the resolution
@@ -212,67 +222,173 @@ for (res in res_cols) {
   print(p)
   readline(prompt="Press [Enter] to see the next resolution...")
 }
+
+#save all
+pdf("output/SScILD/Upper/All_resolutions_UMAP.pdf", width = 6, height = 5)
+for (res in res_cols) {
+  p <- DimPlot(SS.U, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+dev.off()
+
+
 #save 
-p=DimPlot(SS.U,group.by = "res_0.5",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.5")
-ggsave(filename = "output/SScILD/Upper/SS.Uresolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p = DimPlot(SS.U,group.by = "res_0.6",label = TRUE,label.size = 5, reduction = "umap.harmony") +
+  ggtitle("Resolution: 0.6") + NoLegend()
+  
+ggsave(filename = "output/SScILD/Upper/SSU_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
+
 ```
 
 
 
-#4cluster and markers
+###5cluster and markers
 ```{r}
 
 ###clusters
 SS.U=FindNeighbors(SS.U,reduction= "harmony",dims = 1:30)
-SS.U=FindClusters(SS.U, resolution = 0.5,cluster.name = "harmony_clusters")
+SS.U=FindClusters(SS.U, resolution = 0.6,cluster.name = "harmony_clusters")
 #markers
 SS.U_markers=FindAllMarkers(SS.U,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
 SS.U_markers=SS.U_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-write.xlsx(SS.U_markers,file = "output/SScILD/Upper/SS.U_markers.xlsx")
-View(SS.U_markers)
+
+
+
 ```
 
 
-"AIF1", "PTPRC":myloid x
-"SPP1", "MERTK","AIF1": macrophages x
-"FCN1", "IL1B", "CD14":Monocytes x
-"CD1C", "PLD4", "FCER1A" Dendritic x
-"TPSAB1", "CPA3","MS4A2":Mast cells x
-"CD3E":Lymphoid x
-"CD3D", "CD8A", "CD8B":Cytotoxic T x
-"NKG7", "KLRF1":NK cells x
-"MS4A1", "CD79A", "CD19":Blymphocyte x
-"JCHAIN", "CD79A":plasma x
- "NRP1", "IL3RA" plasma dendritic x
- "AGER", "PDPN", "CLIC5","EPCAM":epithelial and alveolar type 1 x
- "SFTPC", "SFTPD", "MUC1": alveolar type 2   x
- KRT5, KRT15, KRT17, :basal x
- "KRT17", "MMP7", "COL1A1", "FN1":aberrant basaloid x
- "RSPH1", "CAPS", "FOXJ1": ciliated x
- "SCGB3A2":club x
- "MUC5B", "SCGB1A1", "SPDEF":Goblet x
- "SCGB1A1", "MUC5B","SPDEF": secretoty
- "VWF", "PECAM1", "CLDN5": endothelial x
- "IGFBP3", "GJA5", "BMX" arterial endo x
- "HPGD", "IL7R", "CA4", "FCN3hi", "SEMA3G":cap endo x
- "COL15A1", "PLVAP", "MPZL2", "POSTN": peribronchial endo x
- "ACKR1", "SELE": venous x
- "LYVE1", "CCL21", "PROX1": Lymphatic endo x
- "LUM", "PDGFRA", "COL1A2":Fibroblasts x
- "ACTA2",  "CTHRC1": myofybroblasts x
- "DES", "ACTA2", "MYH11"_smc x
- "PDGFRB", "RGS5", "FAM162B": Pericytes x
- "MSLN":Mesothelial
- "TOP2A", "BIRC5", "UBE2C", "MKI67":Proliferating cells
-###5Annotation
 
+###6.Annotation
 
 
 ```{r}
 
-#markers-------
-genes=c("AIF1", "PTPRC","SPP1", "MERTK","FCN1", "IL1B", "CD14","CD1C", "PLD4", "FCER1A","TPSAB1", "CPA3","MS4A2","CD3E","CD8A", "CD8B", "NKG7", "KLRF1","MS4A1", "CD79A", "CD19","JCHAIN","NRP1", "IL3RA","AGER", "PDPN", "CLIC5","EPCAM","SFTPC", "SFTPD", "MUC1","KRT5", "KRT15", "KRT17","MMP7", "COL1A1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "SPDEF","VWF", "PECAM1", "CLDN5","IGFBP3", "GJA5","HPGD", "IL7R", "CA4", "FCN3", "SEMA3G","COL15A1", "PLVAP", "MPZL2","ACKR1", "SELE","LYVE1", "CCL21", "PROX1","LUM", "PDGFRA", "COL1A2","ACTA2",  "CTHRC1","DES", "MYH11","PDGFRB", "RGS5", "FAM162B","MSLN","TOP2A", "BIRC5", "UBE2C", "MKI67")
+genes = c(
+  # Myeloid
+  "AIF1", "PTPRC",
 
+  # Macrophage
+  "FCGR1A", "CD163",
+
+  # SPP1hi Macrophage
+  "SPP1", "MERTK", "CCL2",
+
+  # FABP4hi Macrophage
+  "FABP4", "INHBA",
+
+  # Monocyte
+  "FCN1", "IL1B", "CD14",
+
+  # Dendritic
+  "CD1C", "PLD4", "CLEC9A", "FCER1A",
+
+  # Mast
+  "TPSAB1", "CPA3", "MS4A2", "KIT",
+
+  # Lymphoid
+  "CD3E",
+
+  # Cytotoxic T
+  "CD3D", "CD8A", "CD8B", "GZMK",
+
+  # Helper T
+  "CD4", "COTL1", "CCR7", "LEF1",
+
+  # T Regulatory
+  "FOXP3",
+
+  # Natural Killer
+  "NKG7", "KLRF1", "FCER1G", "TYROBP",
+
+  # B Lymphocyte
+  "MS4A1", "CD79A", "CD19",
+
+  # Plasma
+  "JCHAIN", "IGLL5",
+
+  # Plasmacytoid Dendritic
+  "CLEC4C", "CLIC3", "NRP1", "IL3RA",
+
+  # Epithelial
+  "EPCAM",
+
+  # Alveolar Type 1
+  "AGER", "PDPN", "CLIC5",
+
+  # Alveolar Type 2
+  "SFTPC", "SFTPD", "MUC1",
+
+  # Basal
+  "KRT5", "KRT15", "KRT17", "TP63",
+
+  # Aberrant Basaloid
+  "MMP7", "COL1A1", "FN1",
+
+  # Ciliated
+  "RSPH1", "CAPS", "FOXJ1",
+
+  # Club
+  "SCGB3A2",
+
+  # Goblet
+  "MUC5B", "SCGB1A1", "MUC5AC", "SPDEF",
+
+  # Secretory
+  # "SCGB1A1", "MUC5B", "SPDEF",
+
+  # Endothelial
+  "VWF", "PECAM1", "CLDN5",
+
+  # Arterial Endothelial
+  "DKK2", "IGFBP3", "GJA5", "BMX",
+
+  # Capillary Endothelial
+  "HPGD", "IL7R", "CA4", "FCN3", "SEMA3G",
+
+  # Peribronchial Endothelial
+  "COL15A1", "PLVAP", "MPZL2", "POSTN",
+
+  # Venous Endothelial
+  "HDAC9", "ACKR1", "SELE", "SULT1E1",
+
+  # Lymphatic Endothelial
+  "LYVE1", "CCL21", "PROX1",
+
+  # Fibroblast
+  "LUM", "PDGFRA", "COL1A2",
+
+  # Myofibroblast
+  "ACTA2", "CTHRC1",
+
+  # MFAP5hi Fibroblast
+  "MFAP5", "PLA2G2A", "CXCL14",
+
+  # SPINT2hi Fibroblast
+  "SPINT2", "LMCD1", "AOC3", "FGFR4",
+
+  # Smooth Muscle
+  "DES", "MYH11",
+
+  # Pericyte
+  "PDGFRB", "RGS5", "FAM162B",
+
+  # Mesothelial
+  "UPK3B", "WT1", "MSLN",
+
+  # Proliferating Cells
+  "TOP2A", "BIRC5", "UBE2C", "MKI67"
+)
+```
+
+```{r}
+l = FeaturePlot(SS.U, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
+names(l) = unique(genes)
+```
+
+
+
+```{r}
 
 ##plots 
 
@@ -290,9 +406,15 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis()
-p
-ggsave(filename = "output/SScILD/Upper/SS.Ucluster.png", plot = p, width = 16, height = 8)
+  group.by = "harmony_clusters") + RotatedAxis()  
+    p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
+
+ggsave(filename = "output/SScILD/Upper/SSU.cluster.png", plot = p, width = 20, height = 8)
+colnames(SS.U@meta.data)
 
 ```
 
@@ -305,29 +427,31 @@ ggsave(filename = "output/SScILD/Upper/SS.Ucluster.png", plot = p, width = 16, h
 Idents(SS.U)="harmony_clusters"
 cluster_name_x=c(
   "0"  = "Macrophages_0",
-  "1"  = "Myeloid cells_1",
-  "2"  = "Cytotoxic T_2",
+  "1"  = "CD8_1",
+  "2"  = "Macrophages_2",
   "3"  = "Monocytes_3",
-  "4"  = "Capillary Endothelial_4",
-  "5"  = "Alveolar Type2_5",
-  "6"  = "Pericytes_6",
-  "7"  = "Fibroblasts_7",
-  "8"  = "Venous Endothelial_8",
-  "9"  = "Ciliated cells_9",
-  "10" = "NK cells_10",
-  "11" = "Dendritic cells_11",
-  "12" = "Goblet cells_12",
-  "13" = "Mast cells_13",
-  "14" = "Proliferating cells_14",
-  "15" = "Myeloid cells_15",
-  "16" = "Myeloid cells_16",
-  "17" = "Myeloid cells_17",
-  "18" = "B Lymphocytes_18",
-  "19" = "Lymphatic Endothelial_19"
+  "4"  = "Macrophages_4",
+  "5"  = "Capillary Endothelial_5",
+  "6"  = "Macrophages_6",
+  "7"  = "Basal Cells_7",
+  "8"  = "NK Cells_8",
+  "9"  = "Fibroblasts_9",
+  "10" = "Peribronchial Endothelial_10",
+  "11" = "Ciliated Cells_11",
+  "12" = "Alveolar Cells_12",
+  "13" = "Mural Cells_13",
+  "14" = "Mast Cells_14",
+  "15" = "Proliferating Cells_15",
+  "16" = "Mural Cells_16",
+  "17" = "Macrophages_17",
+  "18" = "Lymphatic Endothelial_18",
+  "19" = "Myeloid Cells_19",
+  "20" = "B Cells_20",
+  "21"= "Plasmacytoid Dendritic"
   )
 #-------------
 SS.U=RenameIdents(SS.U, cluster_name_x)
-SS.U$celltype=Idents(SS.U)
+SS.U$CellType=Idents(SS.U)
 
 ##plots 
 
@@ -345,12 +469,12 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis()
+  group.by = "CellType") + RotatedAxis()
 p
-ggsave(filename = "output/SScILD/Upper/SS.Ucluster_name.png", plot = p, width = 16, height = 8)
+ggsave(filename = "output/SScILD/Upper/SSU_cluster_name.png", plot = p, width = 20, height = 8)
+
 
 ```
-
 
 
 
@@ -365,369 +489,586 @@ ggsave(filename = "output/SScILD/Upper/SS.Ucluster_name.png", plot = p, width = 
 Idents(SS.U)="harmony_clusters"
 cluster_name=c(
   "0"  = "Macrophages",
-  "1"  = "Myeloid cells",
-  "2"  = "Cytotoxic T",
+  "1"  = "CD8",
+  "2"  = "Macrophages",
   "3"  = "Monocytes",
-  "4"  = "Capillary Endothelial",
-  "5"  = "Alveolar Type 2",
-  "6"  = "Pericytes",
-  "7"  = "Fibroblasts",
-  "8"  = "Venous Endothelial",
-  "9"  = "Ciliated cells",
-  "10" = "NK cells",
-  "11" = "Dendritic cells",
-  "12" = "Goblet cells",
-  "13" = "Mast cells",
-  "14" = "Proliferating cells",
-  "15" = "Myeloid cells",
-  "16" = "Myeloid cells",
-  "17" = "Myeloid cells",
-  "18" = "B Lymphocytes",
-  "19" = "Lymphatic Endothelial"
+  "4"  = "Macrophages",
+  "5"  = "Capillary Endothelial",
+  "6"  = "Macrophages",
+  "7"  = "Basal Cells",
+  "8"  = "NK Cells",
+  "9"  = "Fibroblasts",
+  "10" = "Peribronchial Endothelial",
+  "11" = "Ciliated Cells",
+  "12" = "Alveolar Cells",
+  "13" = "Mural Cells",
+  "14" = "Mast Cells",
+  "15" = "Proliferating Cells",
+  "16" = "Mural Cells",
+  "17" = "Macrophages",
+  "18" = "Lymphatic Endothelial",
+  "19" = "Myeloid Cells",
+  "20" = "B Cells",
+  "21"= "Plasmacytoid Dendritic" 
   )
 #-------------
 SS.U=RenameIdents(SS.U, cluster_name)
-SS.U$celltype=Idents(SS.U)
+SS.U$Major_Celltype=Idents(SS.U)
 ##2color
 celltype_cols = c(
-  "Alveolar Type 2"         = "#E41A1C",  
-  "Ciliated cells"          = "#377EB8",  
-  "Goblet cells"            = "#80B1D3",  
-
-  "Macrophages"             = "#F781BF",  
-  "Monocytes"               = "#A65628",  
-  "Myeloid cells"           = "#FF7F00",  
-  "Dendritic cells"         = "#000000",  
-  "Mast cells"              = "#FFD92F",  
-
-  "Cytotoxic T"             = "#4DAF4A",  
-  "B Lymphocytes"           = "#984EA3",  
-  "Capillary Endothelial"   = "#66C2A5",  
-  "Venous Endothelial"      = "#3288BD",  
-  "Lymphatic Endothelial"   = "#A6D854",  
-
-  "Pericytes"               = "#8C510A",  
-  "Fibroblasts"             = "#B15928",  
-  "Proliferating cells"     = "#FB9A99"   
+  "Macrophages"     = "#1f77b4",
+  "CD8"             = "#ff7f0e",
+  "Monocytes"       = "#2ca02c",
+  "Capillary Endothelial" = "#d62728",
+  "Basal Cells"           = "#9467bd",
+  "NK Cells"              = "#8c564b",
+  "Fibroblasts"           = "#e377c2",
+  "Peribronchial Endothelial" = "#7f7f7f",
+  "Ciliated Cells"            = "#bcbd22",
+  "Alveolar Cells"             = "#17becf",
+  "Mural Cells"                 = "#aec7e8",
+  "Mast Cells"                   = "#ffbb78",
+  "Proliferating Cells"           = "#98df8a",
+  "Lymphatic Endothelial"           = "#ff9896",
+  "Myeloid Cells"                    = "#c5b0d5",
+  "B Cells"                            = "darkblue",
+  "Plasmacytoid Dendritic"              = "gold"
 )
 ##3 center
+colnames(Embeddings(SS.U, "umap.harmony"))
 
-umap_df=as.data.frame(Embeddings(SS.U, "umap.harmony"))
-colnames(umap_df)=c("umap_1", "umap_2")
-umap_df$celltype=SS.U$celltype
-centers=aggregate(
-  cbind(umap_1, umap_2) ~ celltype,
+##3 center
+umap_df <- as.data.frame(Embeddings(SS.U, "umap.harmony"))
+umap_df$Major_Celltype <- SS.U$Major_Celltype
+
+centers <- aggregate(
+  cbind(umapharmony_1, umapharmony_2) ~ Major_Celltype,
   data = umap_df,
   FUN = median
 )
+##plot
+fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umapharmony_1, y = umapharmony_2, label = Major_Celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 3,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "umapharmony_1", y = "umapharmony_2")
 
+ggsave(ggsave(filename = "output/SScILD/Upper/SSU_cellType.png", plot = fig1a, width = 12, height = 8))
 
-##supp duplicate and plot
-library(ggrepel)
-suppressWarnings({
-  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
-    geom_point(size = 0.3) +
-    scale_color_manual(values = celltype_cols) +
-    geom_label_repel(
-      data = centers,
-      aes(x = umap_1, y = umap_2, label = celltype),
-      inherit.aes = FALSE,
-      fill = "white",
-      color = "black",
-      size = 3,
-      box.padding = 0.4,
-      label.size = 0.25,
-      segment.color = NA,
-      max.overlaps = Inf
-    ) +
-    theme_classic() +
-    theme(
-      axis.text = element_blank(),
-      axis.ticks = element_blank(),
-      legend.position = "none"
-    ) +
-    labs(x = "umap 1", y = "umap 2")
-})
-fig1a
-ggsave(ggsave(filename = "output/SScILD/Upper/SS.UcellT.png", plot = fig1a, width = 12, height = 8))
 ```
 
 
 
-
-
-
 ```{r}
-###plot for markers
-##complex heatmap
-SS.U$celltype=mapvalues(as.character(Idents(SS.U)), names(cluster_name), cluster_name)
-Idents(SS.U)="celltype"
 
-# 3️⃣ Extract expression data
-DefaultAssay(SS.U)="RNA"
-expr_mat=GetAssayData(SS.U, layer = "data")
+#####for markers
+# Identity
 
-# Percent of cells expressing each gene per cell type
-percent_mat=sapply(levels(Idents(SS.U)), function(ct) {
-  cells=WhichCells(SS.U, idents = ct)
-  Matrix::rowMeans(expr_mat[genes, cells] > 0) * 100
+Idents(SS.U) <- "CellType"
+
+
+SS.U$CellType <- gsub("-", "_", SS.U$CellType)
+Idents(SS.U) <- "CellType"
+
+
+# Expression matrix
+
+DefaultAssay(SS.U) <- "RNA"
+expr_mat <- GetAssayData(SS.U, layer = "data")
+
+
+# genes in list
+
+genes <- genes[genes %in% rownames(expr_mat)]
+if (length(genes) < 2) stop("Too few genes found")
+
+
+# Cell
+
+celltypes <- levels(factor(Idents(SS.U)))
+
+
+# Percent expression
+
+percent_mat <- sapply(celltypes, function(ct) {
+  cells <- WhichCells(SS.U, idents = ct)
+  Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
-# Average expression per cell type
-avg_exp=AverageExpression(SS.U, features = genes, assays = "RNA", layer = "data",
-                             return.seurat = FALSE)$RNA
-exp_mat=avg_exp[genes, colnames(percent_mat)]
+percent_mat <- as.matrix(percent_mat)
 
-# Convert to matrix
-exp_mat=as.matrix(exp_mat)
-percent_mat=as.matrix(percent_mat)
 
-# 4️⃣ Flashy color function
-library(circlize)
-library(ComplexHeatmap)
-library(circlize)
-library(viridis)
-col_fun=colorRamp2(c(min(exp_mat), 0, max(exp_mat)), c("navy", "yellow", "yellow"))
+# Average expression
 
-# 5️⃣ Dot drawing function
+avg_exp <- AverageExpression(
+  SS.U,
+  features = genes,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
 
+
+colnames(avg_exp) <- gsub("-", "_", colnames(avg_exp))
+
+
+# Align
+common_ct <- intersect(celltypes, colnames(avg_exp))
+if (length(common_ct) < 2) stop("Cell type mismatch still exists")
+
+percent_mat <- percent_mat[, common_ct, drop = FALSE]
+exp_mat <- as.matrix(avg_exp[genes, common_ct, drop = FALSE])
+
+
+#Clean
+
+exp_mat[is.infinite(exp_mat)] <- NA
+exp_mat <- exp_mat[rowSums(is.na(exp_mat)) < ncol(exp_mat), , drop = FALSE]
+percent_mat <- percent_mat[rownames(exp_mat), , drop = FALSE]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+
+# Scaling
+
+exp_mat_scaled <- log1p(exp_mat)
+
+if (all(exp_mat_scaled == 0)) stop("No expression signal")
+
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+
+# Color
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95), na.rm = TRUE)
+q <- unique(as.numeric(q))
+q <- q[is.finite(q)]
+
+if (length(q) < 2) q <- range(exp_mat_scaled, na.rm = TRUE)
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+
+# dot
 cell_fun <- function(j, i, x, y, w, h, fill) {
-  if (!is.na(exp_mat[i, j])) {
-    grid.circle(
-      x = x, y = y,
-      r = (percent_mat[i, j] / 100) * 0.45 * min(unit.c(w, h)),  
-      gp = gpar(fill = col_fun(exp_mat[i, j]), col = "black")    
-    )
-  }
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
 }
 
-# 6️⃣ Top annotation using your cell types
-celltypes=colnames(percent_mat)            
-unique_celltypes=unique(celltypes)
-palette_colors=viridis(length(unique_celltypes))  
 
-column_ha=HeatmapAnnotation(
-  celltype = celltypes,
-  col = list(celltype = setNames(palette_colors, unique_celltypes)),
-  na_col = "grey"
+# Cell colors
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(common_ct))
+
+names(cols) <- common_ct
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = common_ct,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
 )
 
 
-# 7️⃣ Draw heatmap
-
-ht=Heatmap(
-  exp_mat,
+# plot
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
   name = "Expression",
   col = col_fun,
-  rect_gp = gpar(type = "none"),
+  rect_gp = grid::gpar(type = "none"),
   cell_fun = cell_fun,
-  row_names_gp = gpar(fontsize = 6),
-  column_names_gp = gpar(fontsize = 8, rot = 45, just = "right"),
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
   border = TRUE,
   top_annotation = column_ha,
   row_km = 4
 )
 
-draw(ht)
-# PNG
 
- #png(filename = "output/SScILD/Upper/SSUmarker.png",
-    width = 3100, height = 2200, res = 300)
- draw(ht)   
- dev.off()  
-```
+# save
+png("output/SScILD/Upper/SSU_heatmap.png",
+    width = 3200, height = 3500, res = 300)
 
-
-
-###6proportion of cells
-```{r}
-###
-library(dplyr)
-library(ggplot2)
-# Use explicit dplyr:: functions to avoid masking issues
-prop_df=dplyr::as_tibble(SS.U@meta.data) %>%
-  dplyr::count(`sample`, celltype) %>%
-  dplyr::group_by(`sample`) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-
-##rename col
-SS.U_meta <- dplyr::as_tibble(SS.U@meta.data) %>%
-  dplyr::rename(sample_id = sample)   # rename to avoid conflicts
-prop_df=SS.U_meta %>%
-  dplyr::count(sample_id, celltype) %>%
-  dplyr::group_by(sample_id) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-##plot
-fig1c=ggplot(
-  prop_df,
-  aes(x = celltype, y = proportion, color = celltype)
-) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, size = 2) +
-  scale_color_manual(values = celltype_cols) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  ylab("Proportion") +
-  xlab("")
-fig1c
-ggsave(filename = "output/SScILD/Upper/SS.Uproportion.png", plot = fig1c, width = 12, height = 10)
-```
-
-
-
-###7proportion of Dnonors
-```{r}
-library(dplyr)
-library(ggplot2)
-library(scales)
-
-#change colname 
-SS.U$Donors = SS.U$sample
-
-#create the meta data
-meta = SS.U@meta.data[, c("harmony_clusters", "Donors")]
-table(meta$Donors)
-
-# Make sure dplyr functions are used explicitly
-meta = SS.U@meta.data
-
-#the  percentage 
-donors_counts = meta %>%
-  as_tibble() %>%
-  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
-  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
-  dplyr::group_by(harmony_clusters) %>%
-  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
+ComplexHeatmap::draw(ht)
+dev.off()
 ```
 
 
 ```{r}
-###plot
-p = ggplot(donors_counts, aes(
-  x = harmony_clusters,
-  y = proportion,
-  group = Donors,
-  color = Donors
-)) +
-  geom_line(linewidth = 0.9, alpha = 0.9) +
-  geom_point(size = 2.8, alpha = 0.9) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_color_viridis_d(option = "turbo", name = "Donor") +
-  theme_minimal(base_size = 13) +
-  labs(
-    title = "Donors Proportion",
-    x = "Cluster",
-    y = "Proportion (%)"
-  ) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "right"
-  )
-p
-
-ggsave(filename = "output/SScILD/Upper/SS.UDonor.png", plot = p, width = 12, height = 8)
-
-```
+#----same methods
+# gene with major annotation
+Idents(SS.U) <- "Major_Celltype"
 
 
+# -------------------------------
+DefaultAssay(SS.U) <- "RNA"
+expr_mat <- GetAssayData(SS.U, layer = "data")
 
-```{r}
-##correlation with the cells
-# 1️⃣ Set identities to cell types
-Idents(SS.U) <- "celltype"
+# -------------------------------
+# Percent expression matrix
 
-# sanity check
-levels(Idents(SS.U))
-# should show cell type names, NOT numbers
+percent_mat <- sapply(levels(Idents(SS.U)), function(ct) {
+  cells <- WhichCells(SS.U, idents = ct)
+  Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
 
-# 2️⃣ Average expression per cell type
-av.expSS <- AverageExpression(
+# -------------------------------
+# Average expression matrix
+
+avg_exp <- AverageExpression(
   SS.U,
+  features = genes,
   assays = "RNA",
-  slot = "data"
+  layer = "data",
+  return.seurat = FALSE
 )$RNA
-# rows = genes, columns = cell types
 
-# 3️⃣ Cell-type correlation matrix
-correlation_matrixSS <- cor(
-  as.matrix(av.expSS),
-  use = "pairwise.complete.obs"
+exp_mat <- as.matrix(avg_exp[genes, colnames(percent_mat)])
+
+# -------------------------------
+# Clean data
+
+exp_mat[is.infinite(exp_mat)] <- NA
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+# -------------------------------
+# Scaling
+
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+# -------------------------------
+# Color function
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+# -------------------------------
+# Dot rendering
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
+}
+
+# -------------------------------
+# Cell type colors (annotation)
+
+celltypes <- colnames(exp_mat_scaled)
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
 )
 
-# safety cleanup
-correlation_matrixSS[is.na(correlation_matrixSS)]=0
+# -------------------------------
+# plot
 
-# 4️⃣ Save heatmap
-png(
-  filename = "output/SScILD/Upper/SS.Ucellcor.png",
-  width = 3000,
-  height = 2400,
-  res = 300
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+
+  column_names_gp = grid::gpar(
+    fontsize = 10,
+    fontface = "bold"
+  ),
+
+  column_names_rot = 90,
+
+  border = TRUE,
+  top_annotation = column_ha,
+  row_km = 4
 )
 
-pheatmap(
-  correlation_matrixSS,
-  clustering_method = "ward.D2",
-  main = "Correlation Between Cell Types",
-  fontsize_row = 9,
-  fontsize_col = 9
-)
+# -------------------------------
+# save
+
+png("output/SScILD/Upper/markers.png",
+    width = 3200, height = 3500, res = 300)
+
+ComplexHeatmap::draw(ht)
 
 dev.off()
 ```
 
 
 
-###save the final meta data
+##markers that we can have in TLS 
+
+
 ```{r}
-##save
-# Keep your existing metadata names
-SS.U$orig.ident="SScILD in Upper lung"
 
-# Remove unwanted columns 
-cols_to_remove=c(
-  grep("res_|RNA_snn_res", colnames(SS.U@meta.data), value = TRUE),
-  "cell_type",
-  "iscell_ed",
-  "iscell_dd",
-  "Donors",
-  "x",
-  "seurat_clusters"
+markers <- c(
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7",
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB",
+  "CCL2", "CCL3", "CCL4", "CCL5",
+  "CXCL12", "CXCL13", "CCL19", "CCL21",
+  "ICAM1", "VCAM1", "SELE", "CD54",
+  "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C",
+  "CD21", "CD23", "CR1", "CR2", "CD35",
+  "FDCSP", "FCER2", "NTAN1"
 )
-SS.U@meta.data=SS.U@meta.data[, !(colnames(SS.U@meta.data) %in% cols_to_remove)]
 
-# Ensure active identity reflects your celltype
-Idents(SS.U)=SS.U$celltype
+markers <- markers[markers %in% rownames(SS.U)]
 
-# Save 
-saveRDS(SS.U, file = "data/process/SeuratObjects/SScILD/Upper/SS.U_Final.rds")
+Idents(SS.U) <- "Major_Celltype"
 
-# Save only the final metadata 
-saveRDS(SS.U@meta.data, file = "data/process/SeuratObjects/SScILD/Upper/SS.U.metadata.rds")
+DefaultAssay(SS.U) <- "RNA"
+expr_mat <- GetAssayData(SS.U, layer = "data")
 
-# Optional CSV 
-write.csv(SS.U@meta.data, 
-          file = "data/process/SeuratObjects/SScILD/Upper/SS.U.metadata.csv",
-          row.names = TRUE)
-View(SS.U@meta.data)
+percent_mat <- sapply(levels(Idents(SS.U)), function(ct) {
+  cells <- WhichCells(SS.U, idents = ct)
+  Matrix::rowMeans(expr_mat[markers, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
+
+avg_exp <- AverageExpression(
+  SS.U,
+  features = markers,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
+
+exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
+
+exp_mat[is.infinite(exp_mat)] <- NA
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
+}
+
+celltypes <- colnames(exp_mat_scaled)
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
+)
+
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  top_annotation = column_ha,
+  row_km = 4
+)
+
+png("output/SScILD/Upper/TLS_markers.png",
+    width = 3200, height = 3500, res = 300)
+
+ComplexHeatmap::draw(ht)
+
+dev.off()
+
+
 ```
 
 
-##save
+
+###7correlation
 ```{r}
+
+##correlation for celltype
+
+# 1️⃣ Set identities to cell types
+Idents(SS.U) <- "Major_Celltype"
+
+# sanity check
+levels(Idents(SS.U))
+# should show cell type names
+
+# 2️⃣ Average expression per cell type
+av.expSSU <- AverageExpression(
+  SS.U,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+
+# 3️⃣ Cell-type correlation matrix
+correlation_matrixSSU <- cor(
+  as.matrix(av.expSSU),
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrixSSU[is.na(correlation_matrixSSU)] <- 0
+
+# 4️⃣ Save heatmap as PNG
+png(
+  filename = "output/SScILD/Upper/SSU_correlation.png",
+  width = 3000,
+  height = 2400,
+  res = 300
+)
+
+pheatmap(
+  correlation_matrixSSU,
+  clustering_method = "ward.D2",
+  fontsize_row = 9,
+  fontsize_col = 9
+)
+
+dev.off()
+colnames(SS.U@meta.data)
+```
+
+
+
+###8 Class Major_Celltype with family
+
+
+```{r}
+#------
+#extract
+unique(SS.U$Major_Celltype)
+
+#
+SS.U$General <- recode(SS.U$Major_Celltype,
+                      "Monoccytes"="Mono/Mac" ,
+                      "Capillary Endothelial " ="Endothelial Cells",
+                      "Mast Cells" ="Mast Cells" ,
+                      "Basal Cells" ="Epithelial Cells",
+                      "Plasmacytoid Dendritic "="Mono/Mac",
+                      "Macrophages"  ="Mono/Mac",
+                      "Mural Cells"  ="Mural Cells",
+                      "Myeloid Cells" ="Mono/Mac",
+                      "Alveolar Cells"= "Epithelial Cells",
+                      "CD8" ="CD8",
+                      "B Cells" = "B Cells" ,
+                      "NK Cells" = "NK Cells",
+                       "Ciliated Cells" ="Epithelial Cells",
+                      "Fibroblasts"="Fibroblasts",
+                      "Proliferating Cells"="Proliferating Cells",
+                      "Peribronchial Endothelial"="Endothelial Cells",
+                      "Lymphatic Endothelial"="Endothelial Cells"
+)
+
+```
+
+
+
+
+
+
+
+
+###save the final meta data
+```{r}
+View(SS.U@meta.data)
+##save
+
+SS.U$orig.ident= "SScILD.U"
+keep_cols <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "sample",
+  "harmony_clusters",
+  "CellType",
+  "Major_Celltype",
+  "General"
+)
+SS.U@meta.data <- SS.U@meta.data[, keep_cols]
+
 #----------
 saveRDS(SS.U, file = "data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
 
 ## run it later to load all 
-#SS.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+SS.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+
+#CSV 
+write.csv(SS.U@meta.data, 
+          file = "data/process/SeuratObjects/SScILD/Upper/SS.U.metadata.csv",
+          row.names = TRUE)
 
 ```
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -769,10 +1110,12 @@ SS.L=readRDS("data/process/SeuratObjects/SScILD/Low/SS.L.rds")
 DefaultAssay(SS.L) # if not RNA set is as RNA
 #
 SS.L[["percent.mt"]]=PercentageFeatureSet(SS.L, pattern = "^MT-")
+
 Idents(SS.L)="x"
 SS.L$x="All"
 VlnPlot(SS.L,features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log= TRUE)
 SS.L=subset(SS.L,subset=nFeature_RNA >300 & nFeature_RNA <7000 & percent.mt<15)
+
 ```
 
 
@@ -787,6 +1130,7 @@ SS.L=RunPCA(SS.L, features = VariableFeatures(object = SS.L))
 ElbowPlot(SS.L, ndims = 50, reduction = "pca")
 SS.L=RunUMAP(SS.L, dims = 1:30)
 DimPlot(SS.L,reduction = "umap", label = TRUE)
+
 ```
 
 
@@ -797,10 +1141,8 @@ DimPlot(SS.L,reduction = "umap", label = TRUE)
 library(harmony)
 SS.L=RunHarmony(SS.L,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
 SS.L[["RNA"]]=JoinLayers(SS.L[["RNA"]])
-
 SS.L = RunUMAP(SS.L, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-p=DimPlot(SS.L,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
-ggsave(filename = "output/SScILD/Low/SS.Lintegration.png", plot=p, width = 12, height = 8)
+
 
 
 #for the resolution
@@ -817,9 +1159,22 @@ for (res in res_cols) {
   print(p)
   readline(prompt="Press [Enter] to see the next resolution...")
 }
+
+#save all
+pdf("output/SScILD/Low/All_resolutions_UMAP.pdf", width = 6, height = 5)
+for (res in res_cols) {
+  p <- DimPlot(SS.L, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+dev.off()
+
+
+
+
 #save 
-p=DimPlot(SS.L,group.by = "res_0.5",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.5")
-ggsave(filename = "output/SScILD/Low/SS.Lresolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p=DimPlot(SS.L,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6") +NoLegend()
+ggsave(filename = "output/SScILD/Low/SSL.resolution.png",plot = p,width = 12,height = 8,dpi = 300)
 
 ```
 
@@ -829,12 +1184,11 @@ ggsave(filename = "output/SScILD/Low/SS.Lresolution.png",plot = p,width = 12,hei
 ##cluster
 ###clusters
 SS.L=FindNeighbors(SS.L,reduction= "harmony",dims = 1:30)
-SS.L=FindClusters(SS.L, resolution = 0.5,cluster.name = "harmony_clusters")
+SS.L=FindClusters(SS.L, resolution = 0.6,cluster.name = "harmony_clusters")
 #markers
 SS.L_markers=FindAllMarkers(SS.L,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
 SS.L_markers=SS.L_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-write.xlsx(SS.L_markers,file = "output/SScILD/Low/SS.L_markers.xlsx")
-View(SS.L_markers)
+
 
 ```
 
@@ -842,10 +1196,137 @@ View(SS.L_markers)
  
 ###5annotation
 
-```{r}
-###marker
-genes=c("AIF1","PTPRC","FCGR1A","SPP1", "MERTK","FABP4", "INHBA","FCN1", "IL1B", "CD14","CD1C", "PLD4",  "FCER1A","TPSAB1", "CPA3", "MS4A2","CD3E","CD8A", "CD8B", "GZMK","NKG7", "KLRF1","MS4A1", "CD79A","JCHAIN","NRP1", "IL3RA","AGER", "PDPN", "CLIC5","SFTPC", "SFTPD", "MUC1","KRT5", "KRT15", "KRT17","MMP7", "COL1A1","RSPH1", "CAPS", "FOXJ1","SCGB3A2","MUC5B", "SCGB1A1", "SPDEF","VWF", "PECAM1", "CLDN5","GJA5", "BMX","FCN3", "SEMA3G","COL15A1", "PLVAP", "MPZL2", "POSTN","ACKR1", "SELE","LYVE1", "CCL21", "PROX1","LUM", "PDGFRA", "COL1A2",  "CTHRC1","DES", "ACTA2", "MYH11","PDGFRB", "RGS5", "FAM162B","TOP2A", "BIRC5", "UBE2C", "MKI67")
 
+```{r}
+
+genes = c(
+  # Myeloid
+  "AIF1", "PTPRC",
+
+  # Macrophage
+  "FCGR1A", "CD163",
+
+  # SPP1hi Macrophage
+  "SPP1", "MERTK", "CCL2",
+
+  # FABP4hi Macrophage
+  "FABP4", "INHBA",
+
+  # Monocyte
+  "FCN1", "IL1B", "CD14",
+
+  # Dendritic
+  "CD1C", "PLD4", "CLEC9A", "FCER1A",
+
+  # Mast
+  "TPSAB1", "CPA3", "MS4A2", "KIT",
+
+  # Lymphoid
+  "CD3E",
+
+  # Cytotoxic T
+  "CD3D", "CD8A", "CD8B", "GZMK",
+
+  # Helper T
+  "CD4", "COTL1", "CCR7", "LEF1",
+
+  # T Regulatory
+  "FOXP3",
+
+  # Natural Killer
+  "NKG7", "KLRF1", "FCER1G", "TYROBP",
+
+  # B Lymphocyte
+  "MS4A1", "CD79A", "CD19",
+
+  # Plasma
+  "JCHAIN", "IGLL5",
+
+  # Plasmacytoid Dendritic
+  "CLEC4C", "CLIC3", "NRP1", "IL3RA",
+
+  # Epithelial
+  "EPCAM",
+
+  # Alveolar Type 1
+  "AGER", "PDPN", "CLIC5",
+
+  # Alveolar Type 2
+  "SFTPC", "SFTPD", "MUC1",
+
+  # Basal
+  "KRT5", "KRT15", "KRT17", "TP63",
+
+  # Aberrant Basaloid
+  "MMP7", "COL1A1", "FN1",
+
+  # Ciliated
+  "RSPH1", "CAPS", "FOXJ1",
+
+  # Club
+  "SCGB3A2",
+
+  # Goblet
+  "MUC5B", "SCGB1A1", "MUC5AC", "SPDEF",
+
+  # Secretory
+  # "SCGB1A1", "MUC5B", "SPDEF",
+
+  # Endothelial
+  "VWF", "PECAM1", "CLDN5",
+
+  # Arterial Endothelial
+  "DKK2", "IGFBP3", "GJA5", "BMX",
+
+  # Capillary Endothelial
+  "HPGD", "IL7R", "CA4", "FCN3", "SEMA3G",
+
+  # Peribronchial Endothelial
+  "COL15A1", "PLVAP", "MPZL2", "POSTN",
+
+  # Venous Endothelial
+  "HDAC9", "ACKR1", "SELE", "SULT1E1",
+
+  # Lymphatic Endothelial
+  "LYVE1", "CCL21", "PROX1",
+
+  # Fibroblast
+  "LUM", "PDGFRA", "COL1A2",
+
+  # Myofibroblast
+  "ACTA2", "CTHRC1",
+
+  # MFAP5hi Fibroblast
+  "MFAP5", "PLA2G2A", "CXCL14",
+
+  # SPINT2hi Fibroblast
+  "SPINT2", "LMCD1", "AOC3", "FGFR4",
+
+  # Smooth Muscle
+  "DES", "MYH11",
+
+  # Pericyte
+  "PDGFRB", "RGS5", "FAM162B",
+
+  # Mesothelial
+  "UPK3B", "WT1", "MSLN",
+
+  # Proliferating Cells
+  "TOP2A", "BIRC5", "UBE2C", "MKI67"
+)
+
+```
+
+
+```{r}
+
+l = FeaturePlot(SS.L, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
+names(l) = unique(genes)
+
+```
+
+
+```{r}
 
 p=DotPlot(
   SS.L,
@@ -861,12 +1342,21 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis()
-p
-ggsave(filename = "output/SScILD/Low/SS.Lcluster.png", plot = p, width = 16, height = 8)
+  group.by = "harmony_clusters") + RotatedAxis()  
+    p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
+ggsave(filename = "output/SScILD/Low/SSL_cluster.png", plot = p, width =20, height = 8)
 
 
 ```
+
+
+
+
+
 
 
 ```{r}
@@ -875,28 +1365,30 @@ ggsave(filename = "output/SScILD/Low/SS.Lcluster.png", plot = p, width = 16, hei
 Idents(SS.L)="harmony_clusters"
 cluster_name_x=c(
   "0"  = "Macrophages_0",
-  "1"  = "Venous Endothelial_1",
-  "2"  = "Macrophages_2",
-  "3"  = "Monocytes_3",
-  "4"  = "Ciliated cells_4",
-  "5"  = "Cytotoxic T_5",
-  "6"  = "Alveolar Type2_6",
-  "7"  = "Goblet cells_7",
-  "8"  = "Plasma cells_8",
-  "9"  = "Proliferating cells_9",
-  "10" = "Pericytes_10",
+  "1"  = "Macrophages_1",
+  "2"  = "Monocytes_2",
+  "3"  = "CD8_3",
+  "4"  = "Peribronchial Endothelial_4",
+  "5"  = "Ciliated Cells_5",
+  "6"  = "Alveolar Cells_6",
+  "7"  = "Proliferating Cells_7",
+  "8"  = "Goblet Cells_8",
+  "9"  = "Mural Cells_9",
+  "10" = "Capillary Endothelial_10",
   "11" = "Fibroblasts_11",
-  "12" = "Basal cells_12",
-  "13" = "Ciliated cells_13",
-  "14" = "Mast cells_14",
-  "15" = "NK cells_15",
-  "16" = "Macrophages_16",
-  "17" = "Lymphatic Endothelial_17"
+  "12" = "Macrophages_12",
+  "13" = "Basal Cells_13",
+  "14" = "Mast Cells_14",
+  "15" = "NK Cells_15",
+  "16" = "Ciliated Cells_16",
+  "17" = "B Cells_17",
+  "18" = "Lymphatic Endothelial"
   )
 #-------------
 SS.L=RenameIdents(SS.L, cluster_name_x)
-SS.L$celltype=Idents(SS.L)
+SS.L$CellType = Idents(SS.L)
 
+#plot
 p=DotPlot(
   SS.L,
   features = genes,
@@ -911,12 +1403,14 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis()
-p
-ggsave(filename = "output/SScILD/Low/SS.Lcluster_name.png", plot = p, width = 16, height = 8)
+  group.by = "CellType") + RotatedAxis()  
+    p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+ggsave(filename = "output/SScILD/Low/SSL_cluster_name.png", plot = p, width = 20, height = 8)
 
 ```
-
 
 
 
@@ -933,365 +1427,585 @@ ggsave(filename = "output/SScILD/Low/SS.Lcluster_name.png", plot = p, width = 16
 Idents(SS.L)="harmony_clusters"
 cluster_name=c(
   "0"  = "Macrophages",
-  "1"  = "Venous Endothelial",
-  "2"  = "Macrophages",
-  "3"  = "Monocytes",
-  "4"  = "Ciliated cells",
-  "5"  = "Cytotoxic T",
-  "6"  = "Alveolar Type 2",
-  "7"  = "Goblet cells",
-  "8"  = "Plasma cells",
-  "9"  = "Proliferating cells",
-  "10" = "Pericytes",
+  "1"  = "Macrophages",
+  "2"  = "Monocytes",
+  "3"  = "CD8",
+  "4"  = "Peribronchial Endothelial",
+  "5"  = "Ciliated Cells",
+  "6"  = "Alveolar Cells",
+  "7"  = "Proliferating Cells",
+  "8"  = "Goblet Cells",
+  "9"  = "Mural Cells",
+  "10" = "Capillary Endothelial",
   "11" = "Fibroblasts",
-  "12" = "Basal cells",
-  "13" = "Ciliated cells",
-  "14" = "Mast cells",
-  "15" = "NK cells",
-  "16" = "Macrophages",
-  "17" = "Lymphatic Endothelial"
+  "12" = "Macrophages",
+  "13" = "Basal Cells",
+  "14" = "Mast Cells",
+  "15" = "NK Cells",
+  "16" = "Ciliated Cells",
+  "17" = "B Cells",
+  "18" = "Lymphatic Endothelial"
   )
 #-------------
 SS.L=RenameIdents(SS.L, cluster_name)
-SS.L$celltype=Idents(SS.L)
+SS.L$Major_Celltype=Idents(SS.L)
 ##2color
 celltype_cols = c(
-  "Venous Endothelial"          = "#E41A1C",  
-  "Pericytes"                   = "#377EB8",  
-  "Lymphatic Endothelial"       = "#80B1D3",  
-  "Proliferating cells"         = "#F781BF",  
-  "Plasma cells"                = "#E69F00",  
-  "Monocytes"                   = "#FF7F00",  
-  "Macrophages"                 = "#000000",  
-  "Alveolar Type 2"             = "#FFD92F",  
-  "Ciliated cells"              = "#4DAF4A",  
-  "Goblet cells"                = "#984EA3",  
-  "Basal cells"                 = "#66C2A5",  
-  "Mast cells"                  = "#3288BD",  
-  "Cytotoxic T"                 = "#A6D854",  
-  "NK cells"                    = "#8C510A" 
-        
-  
+ "Macrophages"                = "#1f77b4",
+  "Monocytes"                 = "#2ca02c",
+  "CD8"                       = "#ff7f0e",
+  "Peribronchial Endothelial" = "darkblue",
+  "Ciliated Cells"            = "#bcbd22",
+  "Alveolar Cells"            = "#17becf",
+  "Proliferating Cells"       = "#98df8a",
+  "Goblet Cells"              = "gold",
+  "Mural Cells"               = "#aec7e8",
+  "Capillary Endothelial"     = "#d62728",
+  "Fibroblasts"               = "#e377c2",
+  "Basal Cells"               = "#9467bd",
+  "Mast Cells"                = "#ffbb78",
+  "NK Cells"                  = "#8c564b",
+  "B Cells"                   = "magenta",
+  "Lymphatic Endothelial"     = "tomato"
 )
-##3 center
 
-umap_df=as.data.frame(Embeddings(SS.L, "umap.harmony"))
-colnames(umap_df)=c("umap_1", "umap_2")
-umap_df$celltype=SS.L$celltype
-centers=aggregate(
-  cbind(umap_1, umap_2) ~ celltype,
+##3 center
+umap_df <- as.data.frame(Embeddings(SS.L, "umap.harmony"))
+umap_df$Major_Celltype <- SS.L$Major_Celltype
+
+centers <- aggregate(
+  cbind(umapharmony_1, umapharmony_2) ~ Major_Celltype,
   data = umap_df,
   FUN = median
 )
+##plot
+fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umapharmony_1, y = umapharmony_2, label = Major_Celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 3,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "umapharmony_1", y = "umapharmony_2")
 
-
-##supp duplicate and plot
-library(ggrepel)
-suppressWarnings({
-  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
-    geom_point(size = 0.3) +
-    scale_color_manual(values = celltype_cols) +
-    geom_label_repel(
-      data = centers,
-      aes(x = umap_1, y = umap_2, label = celltype),
-      inherit.aes = FALSE,
-      fill = "white",
-      color = "black",
-      size = 3,
-      box.padding = 0.4,
-      label.size = 0.25,
-      segment.color = NA,
-      max.overlaps = Inf
-    ) +
-    theme_classic() +
-    theme(
-      axis.text = element_blank(),
-      axis.ticks = element_blank(),
-      legend.position = "none"
-    ) +
-    labs(x = "umap 1", y = "umap 2")
-})
 fig1a
-ggsave(ggsave(filename = "output/SScILD/Low/SS.LcellT.png", plot = fig1a, width = 12, height = 8))
+ggsave(ggsave(filename = "output/SScILD/Low/SSL_cellType.png", plot = fig1a, width = 12, height = 8))
+
+
 ```
 
 
 
 ```{r}
-###with the markers
 
-##complex heatmap
-SS.L$celltype=mapvalues(as.character(Idents(SS.L)), names(cluster_name), cluster_name)
-Idents(SS.L)="celltype"
+#####for markers
+# Identity
 
-# 3️⃣ Extract expression data
-DefaultAssay(SS.L)="RNA"
-expr_mat=GetAssayData(SS.L, layer = "data")
+Idents(SS.L) <- "CellType"
 
-# Percent of cells expressing each gene per cell type
-percent_mat=sapply(levels(Idents(SS.L)), function(ct) {
-  cells=WhichCells(SS.L, idents = ct)
-  Matrix::rowMeans(expr_mat[genes, cells] > 0) * 100
+
+SS.L$CellType <- gsub("-", "_", SS.L$CellType)
+Idents(SS.L) <- "CellType"
+
+
+# Expression matrix
+
+DefaultAssay(SS.L) <- "RNA"
+expr_mat <- GetAssayData(SS.L, layer = "data")
+
+
+# genes in list
+
+genes <- genes[genes %in% rownames(expr_mat)]
+if (length(genes) < 2) stop("Too few genes found")
+
+
+# Cell
+
+celltypes <- levels(factor(Idents(SS.L)))
+
+
+# Percent expression
+
+percent_mat <- sapply(celltypes, function(ct) {
+  cells <- WhichCells(SS.L, idents = ct)
+  Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
-# Average expression per cell type
-avg_exp=AverageExpression(SS.L, features = genes, assays = "RNA", layer = "data",
-                             return.seurat = FALSE)$RNA
-exp_mat=avg_exp[genes, colnames(percent_mat)]
+percent_mat <- as.matrix(percent_mat)
 
-# Convert to matrix
-exp_mat=as.matrix(exp_mat)
-percent_mat=as.matrix(percent_mat)
 
-# 4️⃣ Flashy color function
-library(circlize)
-library(ComplexHeatmap)
-library(circlize)
-library(viridis)
-col_fun=colorRamp2(c(min(exp_mat), 0, max(exp_mat)), c("navy", "yellow", "yellow"))
+# Average expression
 
-# 5️⃣ Dot drawing function
+avg_exp <- AverageExpression(
+  SS.L,
+  features = genes,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
 
+
+colnames(avg_exp) <- gsub("-", "_", colnames(avg_exp))
+
+
+# Align
+common_ct <- intersect(celltypes, colnames(avg_exp))
+if (length(common_ct) < 2) stop("Cell type mismatch still exists")
+
+percent_mat <- percent_mat[, common_ct, drop = FALSE]
+exp_mat <- as.matrix(avg_exp[genes, common_ct, drop = FALSE])
+
+
+#Clean
+
+exp_mat[is.infinite(exp_mat)] <- NA
+exp_mat <- exp_mat[rowSums(is.na(exp_mat)) < ncol(exp_mat), , drop = FALSE]
+percent_mat <- percent_mat[rownames(exp_mat), , drop = FALSE]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+
+# Scaling
+
+exp_mat_scaled <- log1p(exp_mat)
+
+if (all(exp_mat_scaled == 0)) stop("No expression signal")
+
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+
+# Color
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95), na.rm = TRUE)
+q <- unique(as.numeric(q))
+q <- q[is.finite(q)]
+
+if (length(q) < 2) q <- range(exp_mat_scaled, na.rm = TRUE)
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+
+# dot
 cell_fun <- function(j, i, x, y, w, h, fill) {
-  if (!is.na(exp_mat[i, j])) {
-    grid.circle(
-      x = x, y = y,
-      r = (percent_mat[i, j] / 100) * 0.45 * min(unit.c(w, h)),  
-      gp = gpar(fill = col_fun(exp_mat[i, j]), col = "black")    
-    )
-  }
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
 }
 
-# 6️⃣ Top annotation using your cell types
-celltypes=colnames(percent_mat)            
-unique_celltypes=unique(celltypes)
-palette_colors=viridis(length(unique_celltypes))  
 
-column_ha=HeatmapAnnotation(
-  celltype = celltypes,
-  col = list(celltype = setNames(palette_colors, unique_celltypes)),
-  na_col = "grey"
+# Cell colors
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(common_ct))
+
+names(cols) <- common_ct
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = common_ct,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
 )
 
 
-# 7️⃣ Draw heatmap
-
-ht=Heatmap(
-  exp_mat,
+# plot
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
   name = "Expression",
   col = col_fun,
-  rect_gp = gpar(type = "none"),
+  rect_gp = grid::gpar(type = "none"),
   cell_fun = cell_fun,
-  row_names_gp = gpar(fontsize = 6),
-  column_names_gp = gpar(fontsize = 8, rot = 45, just = "right"),
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
   border = TRUE,
   top_annotation = column_ha,
   row_km = 4
 )
 
-draw(ht)
-# PNG
 
- png(filename = "output/SScILD/Low/SSLmarker.png",
-    width = 3100, height = 2200, res = 300)
- draw(ht)   
- dev.off()  
+# save
+png("output/SScILD/Low/SSL_heatmap.png",
+    width = 3200, height = 3500, res = 300)
+
+ComplexHeatmap::draw(ht)
+dev.off()
+
+
 ```
 
 
 
 
-###6proportion of cells
-```{r}
-###
-library(dplyr)
-library(ggplot2)
-# Use explicit dplyr:: functions to avoid masking issues
-prop_df=dplyr::as_tibble(SS.L@meta.data) %>%
-  dplyr::count(`sample`, celltype) %>%
-  dplyr::group_by(`sample`) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-
-##rename col
-SS.U_meta <- dplyr::as_tibble(SS.L@meta.data) %>%
-  dplyr::rename(sample_id = sample)   # rename to avoid conflicts
-prop_df=SS.U_meta %>%
-  dplyr::count(sample_id, celltype) %>%
-  dplyr::group_by(sample_id) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-##plot
-fig1c=ggplot(
-  prop_df,
-  aes(x = celltype, y = proportion, color = celltype)
-) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, size = 2) +
-  scale_color_manual(values = celltype_cols) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  ylab("Proportion") +
-  xlab("")
-fig1c
-ggsave(filename = "output/SScILD/Low/SS.Lproportion.png", plot = fig1c, width = 12, height = 10)
-
-```
-
-
-
-###7proportion of Donors
-```{r}
-library(dplyr)
-library(ggplot2)
-library(scales)
-
-#change colname 
-SS.L$Donors = SS.L$sample
-
-#create the meta data
-meta = SS.L@meta.data[, c("harmony_clusters", "Donors")]
-table(meta$Donors)
-
-# Make sure dplyr functions are used explicitly
-meta = SS.L@meta.data
-
-#the  percentage 
-donors_counts = meta %>%
-  as_tibble() %>%
-  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
-  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
-  dplyr::group_by(harmony_clusters) %>%
-  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
-```
-
-
 
 ```{r}
-###plot
-p = ggplot(donors_counts, aes(
-  x = harmony_clusters,
-  y = proportion,
-  group = Donors,
-  color = Donors
-)) +
-  geom_line(linewidth = 0.9, alpha = 0.9) +
-  geom_point(size = 2.8, alpha = 0.9) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_color_viridis_d(option = "turbo", name = "Donor") +
-  theme_minimal(base_size = 13) +
-  labs(
-    title = "Donors Proportion",
-    x = "Cluster",
-    y = "Proportion (%)"
-  ) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "right"
+#----same methods
+# gene with major annotation
+Idents(SS.L) <- "Major_Celltype"
+
+
+# -------------------------------
+DefaultAssay(SS.L) <- "RNA"
+expr_mat <- GetAssayData(SS.L, layer = "data")
+
+# -------------------------------
+# Percent expression matrix
+
+percent_mat <- sapply(levels(Idents(SS.L)), function(ct) {
+  cells <- WhichCells(SS.L, idents = ct)
+  Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
+
+# -------------------------------
+# Average expression matrix
+
+avg_exp <- AverageExpression(
+  SS.L,
+  features = genes,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
+
+exp_mat <- as.matrix(avg_exp[genes, colnames(percent_mat)])
+
+# -------------------------------
+# Clean data
+
+exp_mat[is.infinite(exp_mat)] <- NA
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+# -------------------------------
+# Scaling
+
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+# -------------------------------
+# Color function
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+# -------------------------------
+# Dot rendering
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
   )
-p
+}
 
-ggsave(filename = "output/SScILD/Low/SS.LDonor.png", plot = p, width = 12, height = 8)
+# -------------------------------
+# Cell type colors (annotation)
+
+celltypes <- colnames(exp_mat_scaled)
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
+)
+
+# -------------------------------
+# plot
+
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+
+  column_names_gp = grid::gpar(
+    fontsize = 10,
+    fontface = "bold"
+  ),
+
+  column_names_rot = 90,
+
+  border = TRUE,
+  top_annotation = column_ha,
+  row_km = 4
+)
+
+# -------------------------------
+# save
+
+png("output/SScILD/Low/SS.L_markers.png",
+    width = 3200, height = 3500, res = 300)
+
+ComplexHeatmap::draw(ht)
+
+dev.off()
+
 ```
 
 
 
+##markers that we can have in TLS 
+
+
 ```{r}
-##correlation with the cells
+
+markers <- c(
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7",
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB",
+  "CCL2", "CCL3", "CCL4", "CCL5",
+  "CXCL12", "CXCL13", "CCL19", "CCL21",
+  "ICAM1", "VCAM1", "SELE", "CD54",
+  "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C",
+  "CD21", "CD23", "CR1", "CR2", "CD35",
+  "FDCSP", "FCER2", "NTAN1"
+)
+
+markers <- markers[markers %in% rownames(SS.L)]
+
+Idents(SS.L) <- "Major_Celltype"
+
+DefaultAssay(SS.L) <- "RNA"
+expr_mat <- GetAssayData(SS.L, layer = "data")
+
+percent_mat <- sapply(levels(Idents(SS.L)), function(ct) {
+  cells <- WhichCells(SS.L, idents = ct)
+  Matrix::rowMeans(expr_mat[markers, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
+
+avg_exp <- AverageExpression(
+  SS.L,
+  features = markers,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
+
+exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
+
+exp_mat[is.infinite(exp_mat)] <- NA
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
+}
+
+celltypes <- colnames(exp_mat_scaled)
+
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
+)
+
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+  row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  top_annotation = column_ha,
+  row_km = 4
+)
+
+png("output/SScILD/Low/TLS_markers.png",
+    width = 3200, height = 3500, res = 300)
+
+ComplexHeatmap::draw(ht)
+
+dev.off()
+
+
+```
+
+
+
+###7correlation
+```{r}
+
+##correlation for celltype
+
 # 1️⃣ Set identities to cell types
-Idents(SS.L) <- "celltype"
+Idents(SS.L) <- "Major_Celltype"
 
 # sanity check
 levels(Idents(SS.L))
-# should show cell type names, NOT numbers
+# should show cell type names
 
 # 2️⃣ Average expression per cell type
-av.expSS <- AverageExpression(
+av.expSSL <- AverageExpression(
   SS.L,
   assays = "RNA",
   slot = "data"
 )$RNA
-# rows = genes, columns = cell types
 
 # 3️⃣ Cell-type correlation matrix
-correlation_matrixSS <- cor(
-  as.matrix(av.expSS),
+correlation_matrixSSL <- cor(
+  as.matrix(av.expSSL),
   use = "pairwise.complete.obs"
 )
 
 # safety cleanup
-correlation_matrixSS[is.na(correlation_matrixSS)]=0
+correlation_matrixSSL[is.na(correlation_matrixSSL)] <- 0
 
-# 4️⃣ Save heatmap
+# 4️⃣ Save heatmap as PNG
 png(
-  filename = "output/SScILD/Low/SS.Lcellcor.png",
+  filename = "output/SScILD/Low/SSL_correlation.png",
   width = 3000,
   height = 2400,
   res = 300
 )
 
 pheatmap(
-  correlation_matrixSS,
+  correlation_matrixSSL,
   clustering_method = "ward.D2",
-  main = "Correlation Between Cell Types",
   fontsize_row = 9,
   fontsize_col = 9
 )
 
 dev.off()
+
 ```
+
+
+###7 Class Major_Celltype with family
+```{r}
+#------
+#extract
+unique(SS.L$Major_Celltype)
+
+#
+SS.L$General <- recode(SS.L$Major_Celltype,
+                      "Ciliated Cells" = "Epithelial Cells",
+                      "Macrophages" = "Mono/Mac",
+                      "Monocytes" = "Mono/Mac",
+                      "CD8" = "CD8",
+                      "Capillary Endothelial" = "Endothelial Cells",
+                      "Mural Cells" = "Mural Cells",
+                      "Peribronchial Endothelial" = "Endothelial Cells",
+                      "Mast Cells" = "Mast Cells",
+                      "B Cells" = "B Cells",
+                      "Fibroblasts" = "Fibroblasts",
+                      "NK Cells" = "NK Cells",
+                      "Proliferating Cells" = "Proliferating Cells",
+                      "Alveolar Cells" = "Epithelial Cells",
+                      "Basal Cells" = "Epithelial Cells",
+                      "Goblet Cells" = "Epithelial Cells",
+                      "Lymphatic Endothelial" = "Endothelial Cells"
+                      
+)
+```
+
+
+
+
+
+
 
 
 
 ###save the final meta.data
 ```{r}
 ##save
-# Keep your existing metadata names
-SS.L$orig.ident="SScILD in Low lung"
 
-# Remove unwanted columns 
-cols_to_remove=c(
-  grep("res_|RNA_snn_res", colnames(SS.L@meta.data), value = TRUE),
-  "cell_type",
-  "iscell_ed",
-  "iscell_dd",
-  "Donors",
-  "x",
-  "seurat_clusters"
+
+##save
+
+
+keep_cols <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "sample",
+  "harmony_clusters",
+  "CellType",
+  "Major_Celltype",
+  "General"
 )
-SS.L@meta.data=SS.L@meta.data[, !(colnames(SS.L@meta.data) %in% cols_to_remove)]
 
-# Ensure active identity reflects your celltype
-Idents(SS.L)=SS.L$celltype
+SS.L@meta.data <- SS.L@meta.data[, keep_cols]
 
-# Save 
-saveRDS(SS.L, file = "data/process/SeuratObjects/SScILD/Low/SS.L_Final.rds")
+SS.L$orig.ident="SScILD.L"
 
-# Save only the final metadata 
-saveRDS(SS.L@meta.data, file = "data/process/SeuratObjects/SScILD/Low/SS.L.metadata.rds")
 
-# Optional CSV 
+#CSV 
 write.csv(SS.L@meta.data, 
           file = "data/process/SeuratObjects/SScILD/Low/SS.L.metadata.csv",
           row.names = TRUE)
-View(SS.L@meta.data)
-```
 
-
-
-###save
-```{r}
 #-------
 saveRDS(SS.L, file = "data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 
 ## run it later to load all 
 #SS.L = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 
+
+
 ```
+
+
+
 
 
 

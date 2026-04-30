@@ -9,8 +9,18 @@ output: html_notebook
 ###PACKAGES
 ```{r  setup, include=FALSE}
 ##################PACKAGES
-library(pacman)
-  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,)
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+
+
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
@@ -18,67 +28,168 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 ```
 
 
-####STEP_1
-
-###1-load the data
+###1 load the data
 ```{r}
-##load data
-RA1=Read10X("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA28")
-RA2=Read10X("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA50")
+
+library(Seurat)
+library(Matrix)
+
+# Load barcodes and genes
+barcodes <- read.table("data/process/RA/barcodes_filtered.txt", 
+                        header=FALSE, stringsAsFactors=FALSE)$V1
+genes <- read.table("data/process/RA/genes_filtered.txt", 
+                     header=FALSE, stringsAsFactors=FALSE)$V1
+
+cat("Barcodes loaded:", length(barcodes), "\n")
+cat("Genes loaded:", length(genes), "\n")
+
+# load the matrix
+cat("Loading matrix...\n")
+matrix <- readMM("data/process/RA/count_matrix_filtered.mtx")
+cat("Matrix loaded!\n")
+
+# Assign names
+rownames(matrix) <- genes
+colnames(matrix) <- barcodes
+
 ```
 
 
-###2-Create seurat obj
+```{r}
+# Check for duplicates
+cat("Duplicated genes:", sum(duplicated(genes)), "\n")
+
+# Make gene names unique
+genes_unique <- make.unique(genes)
+
+# Reassign rownames with unique genes
+rownames(matrix) <- genes_unique
+colnames(matrix) <- barcodes
+
+# Try creating Seurat object again
+cat("Creating Seurat object...\n")
+seurat_full <- CreateSeuratObject(counts = matrix, project = "E-MTAB-11791")
+cat("Seurat object created!\n")
+print(seurat_full)
+
+```
+
+
+
+```{r}
+# Output directory
+out_dir <- "../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/"
+dir.create(out_dir, recursive=TRUE, showWarnings=FALSE)
+
+# Extract and save each sample
+samples <- list(
+  RA26 = "Syn_Bio_026",
+  RA28 = "Syn_Bio_028",
+  RA49 = "Syn_Bio_049",
+  RA50 = "Syn_Bio_050"
+)
+
+for (name in names(samples)) {
+  cat("Processing", name, "...\n")
+  cells <- grep(samples[[name]], barcodes, value=TRUE)
+  seurat_obj <- subset(seurat_full, cells = cells)
+  saveRDS(seurat_obj, file=paste0(out_dir, name, ".rds"))
+  cat(name, ":", ncol(seurat_obj), "cells — saved as", paste0(name, ".rds\n"))
+}
+
+cat("All done!\n")
+
+```
+
+
+
+```{r}
+
+
+##load seurat obj
+RA26=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA26.rds")
+RA28=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA28.rds")
+RA49=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA49.rds")
+RA50=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Rheumatoid Arthritis/RA50.rds")
+
+
+```
+
+
+
 ```{r}
 #sobj for each sample, label and QC metric for each objects
-obj1=CreateSeuratObject(RA1, project = "RA1")
-obj2=CreateSeuratObject(RA2,project = "RA2")
-obj1$sample="RA1"
-obj2$sample="RA2"
-saveRDS(obj1,file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA1.rds")
-saveRDS(obj2,file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA2.rds")
+
+RA26$sample="RA26"
+RA28$sample="RA28"
+RA49$sample="RA49"
+RA50$sample="RA50"
+
+saveRDS(RA26,file = "data/process/SeuratObjects/RA/RA26.rds")
+saveRDS(RA28,file = "data/process/SeuratObjects/RA/RA28.rds")
+saveRDS(RA49,file = "data/process/SeuratObjects/RA/RA49.rds")
+saveRDS(RA50,file = "data/process/SeuratObjects/RA/RA50.rds")
+
 
 ```
 
 
-###STEP_2:PROCESS,ANALYSE...
 
 ###1-the qc 
 ```{r}
-##load the file
-obj1=readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA1.rds")
-obj2=readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA2.rds")
+
 ##QC
-obj1[["percent.mt"]]=PercentageFeatureSet(obj1, pattern = "^MT-")
-obj2[["percent.mt"]]=PercentageFeatureSet(obj2, pattern = "^MT-")
-VlnPlot(obj1, features = c("nFeature_RNA","nCount_RNA","percent.mt"),ncol = 3, log = TRUE)
-obj1=subset(obj1,subset=nFeature_RNA>600 & nFeature_RNA<8000 & percent.mt<30)
-VlnPlot(obj2, features = c("nFeature_RNA","nCount_RNA","percent.mt"),ncol = 3, log = TRUE)
-obj2=subset(obj2,subset=nFeature_RNA>100 & nFeature_RNA<8000 & percent.mt<20)
+Layers(RA26)
+str(RA26@assays$RNA)
+##QC
+RA26[["percent.mt"]] <- PercentageFeatureSet(RA26, pattern = "^MT-")
+RA28[["percent.mt"]] <- PercentageFeatureSet(RA28, pattern = "^MT-")
+RA49[["percent.mt"]] <- PercentageFeatureSet(RA49, pattern = "^MT-")
+RA50[["percent.mt"]] <- PercentageFeatureSet(RA50, pattern = "^MT-")
+
+# Plot all 4 samples
+library(patchwork)
+
+p1 <- VlnPlot(RA26, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, log = TRUE)
+p2 <- VlnPlot(RA28, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, log = TRUE) 
+p3 <- VlnPlot(RA49, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, log = TRUE)  
+p4 <- VlnPlot(RA50, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, log = TRUE)  
+
+#filter
+RA26 <- subset(RA26, subset = nFeature_RNA > 500 & nFeature_RNA < 8000 & percent.mt < 20)
+RA28 <- subset(RA28, subset = nFeature_RNA > 1000 & nFeature_RNA < 8000 & percent.mt < 20)
+RA49 <- subset(RA49, subset = nFeature_RNA > 500 & nFeature_RNA < 7000 & percent.mt < 10)
+RA50 <- subset(RA50, subset = nFeature_RNA > 500 & nFeature_RNA < 7000 & percent.mt < 15)
+
 ##merge
-RA_obj = merge(obj1, y = obj2, add.cell.ids = c("RA1", "RA2"))
-saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_raw.rds")
-RA_obj=readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_raw.rds")
+RA = merge(RA26,
+           y = c(RA28,RA49,RA50),
+           add.cell.ids = c("RA26", "RA28","RA49","RA50"))
+
+saveRDS(RA, file = "data/process/SeuratObjects/RA/RA_raw.rds")
+
 #save memorie
-rm(obj1,obj2,RA1,RA2)
+rm(RA26,RA28,RA49,RA50)
 gc(full = TRUE)
 
 #look for the assay if not RNA set it as RNA
-DefaultAssay(RA_obj) 
-#if not 
-DefaultAssay(RA_obj) <- "RNA"
+DefaultAssay(RA) 
+
+
 ```
 
 
 
 ###2-Statistics
 ```{r}
+
 ##norm, fvf,scale,runpca
-RA_obj=NormalizeData(RA_obj)
-RA_obj=FindVariableFeatures(RA_obj)
-RA_obj=ScaleData(RA_obj,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = RA_obj))
-RA_obj=RunPCA(RA_obj, features = VariableFeatures(object = RA_obj))
-ElbowPlot(RA_obj, ndims = 50, reduction = "pca")
+
+RA=NormalizeData(RA)
+RA=FindVariableFeatures(RA)
+RA=ScaleData(RA,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = RA))
+RA=RunPCA(RA, features = VariableFeatures(object = RA))
+ElbowPlot(RA, ndims = 50, reduction = "pca")
 
 
 ```
@@ -89,32 +200,42 @@ ElbowPlot(RA_obj, ndims = 50, reduction = "pca")
 
 ##integration
 library(harmony)
-RA_obj =RunHarmony(RA_obj,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
-RA_obj[["RNA"]]=JoinLayers(RA_obj[["RNA"]])
-RA_obj = RunUMAP(RA_obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-p=DimPlot(RA_obj,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
-ggsave(filename = "output/Rheumatoid_Arthritis/RA.integration.png", plot=p, width = 12, height = 8)
+RA =RunHarmony(RA,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
+RA[["RNA"]]=JoinLayers(RA[["RNA"]])
+RA = RunUMAP(RA, reduction = "harmony", dims= 1:30, reduction.name = "UHarmony")
 
 
 #for the resolution
-RA_obj=FindNeighbors(RA_obj,reduction = "harmony",dims = 1:30)
+RA=FindNeighbors(RA,reduction = "harmony",dims = 1:30)
 for (res in seq(0.2, 1, by = 0.1)) {
-  RA_obj=FindClusters(RA_obj, resolution = res)
+  RA=FindClusters(RA, resolution = res)
   colname = paste0("res_", gsub("\\.", "_", res))
-RA_obj[[colname]] = RA_obj$seurat_clusters
+RA[[colname]] = RA$seurat_clusters
 
 }
-res_cols <- grep("^res_", colnames(RA_obj@meta.data), value = TRUE)
+res_cols <- grep("^res_", colnames(RA@meta.data), value = TRUE)
 for (res in res_cols) {
-  p=DimPlot(RA_obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+  p=DimPlot(RA, group.by = res, label = TRUE, reduction = "UHarmony") +
+       ggtitle(paste(res))
   print(p)
   readline(prompt="Press [Enter] to see the next resolution...")
 }
 
+
+#save all
+pdf("output/RA/All_resolutions_UMAP.pdf", width = 6, height = 5)
+for (res in res_cols) {
+  p <- DimPlot(RA, group.by = res, label = TRUE, reduction = "UHarmony") +
+       ggtitle(paste(res))
+  print(p)
+}
+dev.off()
+
+
+
 #save 
-p=DimPlot(RA_obj, reduction = "umap.harmony", group.by = "res_0_3", label = TRUE, pt.size = 1) +ggtitle("Resolution_0.3")
-ggsave(filename = "output/Rheumatoid_Arthritis/RAresolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p=DimPlot(RA, reduction = "UHarmony", group.by = "res_0_8", label = TRUE,label.size = 8, pt.size = 2) +ggtitle("Resolution_0.8") + NoLegend()
+ggsave(filename = "output/RA/RA_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
 
 ```
 
@@ -127,31 +248,12 @@ ggsave(filename = "output/Rheumatoid_Arthritis/RAresolution.png",plot = p,width 
 ###cluster----------
 
 ###clusters
-RA_obj=FindNeighbors(RA_obj,reduction= "harmony",dims = 1:30)
-RA_obj=FindClusters(RA_obj, resolution = 0.3,cluster.name = "harmony_clusters")
+RA=FindNeighbors(RA,reduction= "harmony",dims = 1:30)
+RA=FindClusters(RA, resolution = 0.8,cluster.name = "harmony_clusters")
 
 #marker
-RA_markers=FindAllMarkers(RA_obj,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
+RA_markers=FindAllMarkers(RA,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
 RA_markers=RA_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-write.xlsx(RA_markers,file = "output/Rheumatoid_Arthritis/RA_markers.xlsx")
-
-
-##the average and correlation 
-av.expRA=AverageExpression(RA_obj)$RNA
-correlation_matrixRA=cor(as.matrix(av.expRA), 
-                          as.matrix(av.expRA))
-library(pheatmap)
-pheatmap(
-  correlation_matrixRA,
-  clustering_method = "ward.D2",
-  main = "Correlation between Cluster Groups in Rheumatoid Arthritis",
-  fontsize_row = 8,
-  fontsize_col = 8,
-  filename = "output/Rheumatoid_Arthritis/RA_corr.png",
-  width = 8,
-  height = 8
-)
-
 
 
 ```
@@ -165,11 +267,54 @@ pheatmap(
 
 ```{r, fig.width=10, fig.height=8}
 #------
-genes=c("LUM","DCN","CCDC80","RPL13A","LTB","CD37","MS4A1","RPL21","HLA-DRB1","HLA-DQA1","HLA-DQB1","NR2F2","NOTCH3","TAGLN","CD68","CTSB","MS4A7","PLVAP","EMCN","S100A9","S100A8","NAMPT","IL32","HCST","DUSP2","CPA3","HPGD","CTSG","IGHG3","IGHG1","HSP90B1","PPP1R14B","SOX4","GZMB")
+genes=c(
+  #T cell
+  "CD3E","TRAC","CD3D",
+  
+  #Cytotoxic
+  "CD8A","CD8B","GZMK",
+
+  # helper T
+  "CD4", "COTL1", "CCR7", "LEF1",
+  
+  #B cells
+  "CD79A","CD79B","MS4A1",
+  
+  #Macrophages
+  "CD14","CD68","LYZ",
+  
+  #Plasmacytoid Dc
+  "LILRA4","GZMB","ITM2C",
+  
+  #Mast cells
+  "CD1C", "FCER1A", "CLEC9A", "CPA3",
+  
+  #Neutrophils
+  "IFITM2",
+  
+  #Endothelial cells
+  "VWF","PECAM1", "CLDN5",
+  
+  # Arterial Endothelial
+  "DKK2", "IGFBP3", "GJA5", "BMX",
+  
+   # Capillary Endothelial
+  "HPGD", "IL7R", "CA4", "FCN3", "SEMA3G",
+  
+  # Venous Endothelial
+  "HDAC9", "ACKR1", "SELE",
+  
+  #Mural
+  "ACTA2","TAGLN","DCN",
+  
+  #Fibroblasts
+  "COL1A1","LUM", "PDGFRA"
+  
+)
 
 
 p=DotPlot(
-  RA_obj,
+  RA,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
@@ -182,9 +327,12 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis() 
-p
-ggsave(filename = "output/Rheumatoid_Arthritis/RAcluster.png", plot = p, width = 12, height = 8)
+  group.by = "harmony_clusters") + RotatedAxis()  
+    p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+ggsave(filename = "output/RA/RA_cluster.png", plot = p, width = 12, height = 8)
 
 ```
 
@@ -194,30 +342,35 @@ ggsave(filename = "output/Rheumatoid_Arthritis/RAcluster.png", plot = p, width =
 #--------
 #cluster_specifique_name
 
-Idents(RA_obj)="harmony_clusters"
+Idents(RA)="harmony_clusters"
 cluster_name_x=c(
-  "0"  = "Macrophages_0",
+  "0"  = "Fibroblasts_0",
   "1"  = "Fibroblasts_1",
-  "2"  = "Bcells_2",
-  "3"  = "Fibroblasts_3",
-  "4"  = "Neutrophils_4",
-  "5"  = "NK/T cells_5",
-  "6"  = "Endothelial cells_6",
-  "7"  = "Mast cells_7",
-  "8"  = "Fibroblasts_8",
-  "9"  = "Plasmacytoid DCs_9",
-  "10" = "Bcells_10",
-  "11" = "Plasmablasts_11",
-  "12" = "Dendritic cells_12",
-  "13" = "Pericytes/Mural cells_13"
+  "2"  = "Macrophages_2",
+  "3"  = "CD4_3",
+  "4"  = "Fibroblasts_4",
+  "5"  = "Fibroblasts_5",
+  "6"  = "Fibroblasts_6",
+  "7"  = "Fibroblasts_7",
+  "8"  = "Venous Endothelial_8",
+  "9"  = "Macrophages_9",
+  "10" = "CD8_10",
+  "11" = "Fibroblasts_11",
+  "12" = "Fibroblasts_12",
+  "13" = "Fibroblasts_13",
+  "14" = "B Cells_14",
+  "15" = "Mast Cells_15",
+  "16" = "Arterial Endothelial_16",
+  "17" = "Mural Cells_17",
+  "18" = "Arterial Endothelial_18"
   )
 #-------------
-RA_obj=RenameIdents(RA_obj, cluster_name_x)
-RA_obj$celltype=Idents(RA_obj)
+RA=RenameIdents(RA, cluster_name_x)
+RA$CellType=Idents(RA)
 
 #plot
 p=DotPlot(
-  RA_obj,
+  RA,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
@@ -230,9 +383,12 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis() 
-p
-ggsave(filename = "output/Rheumatoid_Arthritis/RA_cluster_name.png", plot = p, width = 12, height = 8)
+  group.by = "CellType") + RotatedAxis()  
+    p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+ggsave(filename = "output/RA/RA_cluster_name.png", plot = p, width = 12, height = 8)
 
 ```
 
@@ -245,48 +401,52 @@ ggsave(filename = "output/Rheumatoid_Arthritis/RA_cluster_name.png", plot = p, w
 #-------umap-----------
 #---cluster_name
 
-Idents(RA_obj)="harmony_clusters"
+Idents(RA)="harmony_clusters"
 cluster_name=c(
-  "0"  = "Macrophages",
+ "0"  = "Fibroblasts",
   "1"  = "Fibroblasts",
-  "2"  = "B cells",
-  "3"  = "Fibroblasts",
-  "4"  = "Neutrophils",
-  "5"  = "NK/T cells",
-  "6"  = "Endothelial cells",
-  "7"  = "Mast cells",
-  "8"  = "Fibroblasts",
-  "9"  = "Plasmacytoid DCs",
-  "10" = "B cells",
-  "11" = "Plasmablasts",
-  "12" = "Dendritic cells",
-  "13" = "Pericytes/Mural cells"
+  "2"  = "Macrophages",
+  "3"  = "CD4",
+  "4"  = "Fibroblasts",
+  "5"  = "Fibroblasts",
+  "6"  = "Fibroblasts",
+  "7"  = "Fibroblasts",
+  "8"  = "Venous Endothelial",
+  "9"  = "Macrophages",
+  "10" = "CD8",
+  "11" = "Fibroblasts",
+  "12" = "Fibroblasts",
+  "13" = "Fibroblasts",
+  "14" = "B Cells",
+  "15" = "Mast Cells",
+  "16" = "Arterial Endothelial",
+  "17" = "Mural Cells",
+  "18" = "Arterial Endothelial"
   )
 #-------------
-RA_obj=RenameIdents(RA_obj, cluster_name)
-RA_obj$celltype=Idents(RA_obj)
+RA=RenameIdents(RA, cluster_name)
+RA$Major_Celltype=Idents(RA)
 ##2color
 celltype_cols=c(
   "Fibroblasts"                  = "#D73027",  
-  "B cells"                      = "#4575B4", 
-  "Neutrophils"                  = "#FDAE61",  
-  "NK/T cells"                   = "#1B9E77", 
-  "Endothelial cells"            = "#66A61E", 
-  "Mast cells"                   = "#A6761D", 
-  "Plasmacytoid DCs"             = "#984EA3",  
-  "Plasmablasts"                 = "#E69F00",
-  "Dendritic cells"              = "#E7298A",
-  "Pericytes/Mural cells"        = "#000000",
-   "Macrophages"                 = "#762A83"
+  "B Cells"                      = "darkblue", 
+  "Arterial Endothelial"         = "#2ca02c", 
+  "Venous Endothelial"           = "gold1", 
+  "Mast Cells"                   = "cyan", 
+  "Mural Cells"                  = "#984EA3",  
+  "CD4"                          = "#E69F00",
+  "CD8"                          = "#E7298A",
+  "Macrophages"                  = "orangered"
+  
   )
 
 ##3 center
 ##3 center
-umap_df=as.data.frame(Embeddings(RA_obj, "umap.harmony"))
-colnames(umap_df)=c("umap_1", "umap_2")
-umap_df$celltype=RA_obj$celltype
+umap_df=as.data.frame(Embeddings(RA, "UHarmony"))
+colnames(umap_df)=c("UHarmony_1", "UHarmony_2")
+umap_df$Major_Celltype=RA$Major_Celltype
 centers=aggregate(
-  cbind(umap_1, umap_2) ~ celltype,
+  cbind(UHarmony_1, UHarmony_2) ~ Major_Celltype,
   data = umap_df,
   FUN = median
 )
@@ -295,18 +455,18 @@ centers=aggregate(
 ##supp duplicate and plot
 library(ggrepel)
 suppressWarnings({
-  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+  fig1a=ggplot(umap_df, aes(UHarmony_1, UHarmony_2, color = Major_Celltype)) +
     geom_point(size = 0.3) +
     scale_color_manual(values = celltype_cols) +
     geom_label_repel(
       data = centers,
-      aes(x = umap_1, y = umap_2, label = celltype),
+      aes(x = UHarmony_1, y = UHarmony_2, label =Major_Celltype ),
       inherit.aes = FALSE,
       fill = "white",
       color = "black",
-      size = 3,
+      size = 3.5,
       box.padding = 0.4,
-      label.size = 0.25,
+      label.size = 0.40,
       segment.color = NA,
       max.overlaps = Inf
     ) +
@@ -316,10 +476,10 @@ suppressWarnings({
       axis.ticks = element_blank(),
       legend.position = "none"
     ) +
-    labs(x = "umap 1", y = "umap 2")
+    labs(x = "UMAP.h", y = "UMAP.h")
 })
 fig1a
-ggsave(ggsave(filename = "output/Rheumatoid_Arthritis/RAcellT.png", plot = fig1a, width = 12, height = 8))
+ggsave(ggsave(filename = "output/RA/RA_cellType.png", plot = fig1a, width = 12, height = 8))
 
 ```
 
@@ -330,164 +490,66 @@ ggsave(ggsave(filename = "output/Rheumatoid_Arthritis/RAcellT.png", plot = fig1a
 ```{r, fig.width=10,fig.height=8}
 
 ##plots with the markers 
-RA_obj$celltype = Idents(RA_obj)
-p=DotPlot(
-  RA_obj,
+#plot with markers...........
+p <- DotPlot(
+  RA,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
   col.max = 2.5,
   dot.min = 0,
   dot.scale = 6,
-  split.by = NULL,
-  scale = TRUE,
-  scale.by = "radius",
-  scale.min = NA,
-  scale.max = NA,
-  cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis()
-p
-ggsave(filename = "output/Rheumatoid_Arthritis/RAmarkers.png", plot = p, width = 12, height = 8)
+  group.by = "Major_Celltype"
+) + RotatedAxis()
+
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
+
+
+ggsave(filename = "output/RA/RA_markers.png", plot = p, width = 12, height = 8)
 
 ```
 
 
-
-
-
-
-
-
+###6.Correlation
 ```{r}
-##-proportion of cells
-library(dplyr)
-library(ggplot2)
 
-# Use explicit dplyr:: functions to avoid masking issues
-prop_df <- dplyr::as_tibble(RA_obj@meta.data) %>%
-  dplyr::count(`sample`, celltype) %>%
-  dplyr::group_by(`sample`) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
+##correlation between celltype
+#1 Set identities to cell types
+Idents(RA) = "Major_Celltype"
 
-##rename col
-RA_obj_meta <- dplyr::as_tibble(RA_obj@meta.data) %>%
-  dplyr::rename(sample_id = sample)   # rename to avoid conflicts
-prop_df=RA_obj_meta %>%
-  dplyr::count(sample_id, celltype) %>%
-  dplyr::group_by(sample_id) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-##plot
-fig1c=ggplot(
-  prop_df,
-  aes(x = celltype, y = proportion, color = celltype)
-) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, size = 2) +
-  scale_color_manual(values = celltype_cols) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  ylab("Proportion") +
-  xlab("")
-fig1c
-ggsave(filename = "output/Rheumatoid_Arthritis/RA_cell_proportion.png", plot = fig1c, width = 12, height = 10)
-```
+#to see cellname
+levels(Idents(RA))
 
 
+#2 Identify highly variable genes
+RA = FindVariableFeatures(RA, nfeatures = 10000)
+hvg = VariableFeatures(RA)[1:5000]
 
-##6proportion of donors
-```{r}
-##proportion of Donors
-
-library(dplyr)
-library(ggplot2)
-library(scales)
-
-#change colname 
-RA_obj$Donors = RA_obj$sample
-
-#create the meta data
-meta = RA_obj@meta.data[, c("harmony_clusters", "Donors")]
-table(meta$Donors)
-
-# Make sure dplyr functions are used explicitly
-meta = RA_obj@meta.data
-
-#the  percentage 
-donors_counts = meta %>%
-  as_tibble() %>%
-  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
-  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
-  dplyr::group_by(harmony_clusters) %>%
-  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
-```
-
-
-
-
-```{r}
-###plot
-p = ggplot(donors_counts, aes(
-  x = harmony_clusters,
-  y = proportion,
-  group = Donors,
-  color = Donors
-)) +
-  geom_line(linewidth = 0.9, alpha = 0.9) +
-  geom_point(size = 2.8, alpha = 0.9) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_color_viridis_d(option = "turbo", name = "Donor") +
-  theme_minimal(base_size = 13) +
-  labs(
-    title = "Donors Proportion",
-    x = "Cluster",
-    y = "Proportion (%)"
-  ) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "right"
-  )
-p
-
-ggsave(filename = "output/Rheumatoid_Arthritis/RADonor.png", plot = p, width = 12, height = 8)
-```
-
-
-
-```{r}
-##correlation with the celltype
-# 1️⃣ Set identities to cell types
-Idents(RA_obj) <- "celltype"
-
-# sanity check
-levels(Idents(RA_obj))
-# should show cell type names
-
-# 2️⃣ Average expression per cell type
-av.expIPF <- AverageExpression(
-  RA_obj,
+#3 Average expression using HVGs
+av_expRA = AverageExpression(
+  RA,
+  features = hvg,
   assays = "RNA",
   slot = "data"
 )$RNA
 
-# 3️⃣ Cell-type correlation matrix
-correlation_matrixIPF <- cor(
-  as.matrix(av.expIPF),
+#4 Cell-type correlation matrix (Spearman)
+correlation_matrix <- cor(
+  as.matrix(av_expRA),
+  method = "spearman",
   use = "pairwise.complete.obs"
 )
 
-# safety cleanup
-correlation_matrixIPF[is.na(correlation_matrixIPF)] <- 0
+# clean
+correlation_matrix[is.na(correlation_matrix)] = 0
 
-# 4️⃣ Save heatmap as PNG
+#5 Save 
 png(
-  filename = "output/Rheumatoid_Arthritis/RAcelltypecorr.png",
+  filename = "output/RA/RA_correlation.png",
   width = 3000,
   height = 2400,
   res = 300
@@ -495,71 +557,114 @@ png(
 library(pheatmap)
 colors=colorRampPalette(c("#2166AC", "white", "#B2182B"))(100)
 pheatmap(
-  correlation_matrixIPF,
-  color = colors,
+  correlation_matrix,
   clustering_method = "ward.D2",
+  color = colors,
   fontsize_row = 9,
   fontsize_col = 9
 )
 
 dev.off()
+
 ```
 
 
+###7 Class Major_Celltype with family
 
-
-
-
-
-
-
-##TO save the final meta.data
 ```{r}
-##save
-# Keep your existing metadata names
-RA_obj$orig.ident="Rheumatoid Arthritis"
 
-# Remove unwanted columns 
-cols_to_remove=c(
-  grep("res_|RNA_snn_res", colnames(RA_obj@meta.data), value = TRUE),
-  "cell_type",
-  "iscell_ed",
-  "iscell_dd",
-  "Donors",
-  "seurat_clusters"
+#EXTRACT
+unique(RA$Major_Celltype)
+
+RA$General <- recode(RA$Major_Celltype,
+  "Fibroblasts" = "Fibroblasts",
+  "Arterial Endothelial" = "Endothelial Cells",
+  "Mural Cells" = "Mural Cells",
+  "CD8" = "CD8",
+  "Macrophages" = "Mono/Mac", 
+  "Mast Cells" = "Mast Cells", 
+  "CD4" = "CD4", 
+  "Venous Endothelial" = "Endothelial Cells", 
+  "B Cells" = "B Cells", 
 )
-RA_obj@meta.data=RA_obj@meta.data[, !(colnames(RA_obj@meta.data) %in% cols_to_remove)]
-
-# Ensure active identity reflects your celltype
-Idents(RA_obj)=RA_obj$celltype
-
-# Save 
-saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_Final.rds")
-
-# Save only the final metadata 
-saveRDS(RA_obj@meta.data, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_obj.metadata.rds")
-
-# Optional CSV 
-write.csv(RA_obj@meta.data, 
-          file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_obj.metadata.csv",
-          row.names = TRUE)
-View(RA_obj@meta.data)
+View(RA@meta.data)
 
 ```
+
+
+
+
+
+##markers that we can have in TLS 
+```{r, fig.width=12, fig.height=8}
+
+#----------
+markers <- c(
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
+
+
+
+p <- DotPlot(
+  RA,
+  features = markers,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "General"
+) + RotatedAxis()
+
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
+
+
+ggsave(filename = "output/RA/TLS_markers.png", plot = p, width = 12, height = 8)
+
+```
+
+
+
 
 
 
 
 ```{r}
-###save
-saveRDS(RA_obj, file = "data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
 
-## run it later to load all 
-#RA_obj = readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")
+#save final meta data
+RA$orig.ident <-"RA"
+keep_cols <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "sample",
+  "harmony_clusters",
+  "CellType",
+  "Major_Celltype",
+  "General"
+)
 
+RA@meta.data <- RA@meta.data[, keep_cols]
 
+#CSV 
+write.csv(RA@meta.data,file = "data/process/SeuratObjects/RA/RA.metadata.csv",row.names = TRUE) 
+          
+##rds
+saveRDS(RA, file="data/process/SeuratObjects/RA/RA_process.rds")
+
+#load it
+#RA = readRDS("data/process/SeuratObjects/RA/RA_process.rds")
 
 ```
+
+
+
+
+
+
 
 
 

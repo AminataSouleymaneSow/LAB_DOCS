@@ -10,9 +10,18 @@ output: html_notebook
 ###LOAD THE PACKAGES 
 
 ```{r setup, include=FALSE}
+
 ##################PACKAGES
-library(pacman)
-  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,)
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
@@ -21,7 +30,8 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 
 
 
-#####STEP_1
+
+
 
 ###1-LOAD THE DATA
 
@@ -39,64 +49,78 @@ MS = read.csv("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Dat
 MS_matrix  = as ( MS, "sparseMatrix")
 
 ##seurat_obj
-MS_obj = CreateSeuratObject(MS_matrix, project = "MS")
+MS = CreateSeuratObject(MS_matrix, project = "MS")
 ##save the raw_file 
-saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
+saveRDS(MS, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
 
 ```
 
 
-####STEP_2:PROCESS AND ANALYSE THE RAW_FILE
 
-###1-FOR THE QC
+
+###3-FOR THE QC
 
 ```{r, fig.width=10, fig.height=8}
 #####
-getwd()
-MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
+
+MS = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_raw.rds")
 ## THE QC for the cutoff to use
-MS_obj[["percent.mt"]] = PercentageFeatureSet(MS_obj ,pattern = "^MT-")
-VlnPlot(MS_obj, features = c("nFeature_RNA","nCount_RNA", "percent.mt"),ncol = 3, log = TRUE)
+MS[["percent.mt"]] = PercentageFeatureSet(MS ,pattern = "^MT-")
+VlnPlot(MS, features = c("nFeature_RNA","nCount_RNA", "percent.mt"),ncol = 3, log = TRUE)
 
 ### to detect abnormal cells 
-plot1=FeatureScatter(MS_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-plot2 = FeatureScatter(MS_obj,feature1 = "nCount_RNA" , feature2 = "nFeature_RNA")
+plot1=FeatureScatter(MS, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 = FeatureScatter(MS,feature1 = "nCount_RNA" , feature2 = "nFeature_RNA")
 plot1 + plot2
-ElbowPlot(MS_obj ,ndims = 50, reduction = "pca")
+ElbowPlot(MS ,ndims = 50, reduction = "pca")
+
 ```
 
-###2-Statistics
+
+###4-Statistics
 
 ```{r}
 #Normalize,fvf,pca,scale
-MS_obj=NormalizeData(MS_obj)
-MS_obj=FindVariableFeatures(MS_obj)
-MS_obj=ScaleData(MS_obj, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = MS_obj))
-MS_obj=RunPCA(MS_obj,features = VariableFeatures(object = MS_obj))
-MS_obj=RunUMAP(MS_obj,dims = 1:30)
-p=DimPlot(MS_obj, reduction = "umap",label = TRUE)
+MS=NormalizeData(MS)
+MS=FindVariableFeatures(MS)
+MS=ScaleData(MS, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = MS))
+MS=RunPCA(MS,features = VariableFeatures(object = MS))
+MS=RunUMAP(MS,dims = 1:30)
+p=DimPlot(MS, reduction = "umap",label = TRUE)
 ggsave(filename = "output/Multiple_Sclerosis/MSUmap.png", plot=p, width = 12, height = 8)
 
 #ELBOW_plot for the threshol of the clusters and neighboor
-ElbowPlot(MS_obj,ndims = 50, reduction = "pca")
+ElbowPlot(MS,ndims = 50, reduction = "pca")
 
 #for the resolution
-MS_obj=FindNeighbors(MS_obj,dims = 1:30)
+MS=FindNeighbors(MS,dims = 1:30)
 for (res in seq(0.2, 1, by = 0.1)) {
-  MS_obj <- FindClusters(MS_obj, resolution = res)
+  MS <- FindClusters(MS, resolution = res)
   colname <- paste0("res_", res)
-  MS_obj[[colname]] <- MS_obj$seurat_clusters
+  MS[[colname]] <- MS$seurat_clusters
 }
-res_cols <- grep("^res_", colnames(MS_obj@meta.data), value = TRUE)
+res_cols <- grep("^res_", colnames(MS@meta.data), value = TRUE)
 for (res in res_cols) {
-  p <- DimPlot(MS_obj, group.by = res, label = TRUE, reduction = "umap") +
+  p <- DimPlot(MS, group.by = res, label = TRUE, reduction = "umap") +
        ggtitle(paste("Resolution:", res))
   print(p)
   readline(prompt="Press [Enter] to see the next resolution...")
 }
+#save all
+pdf("output/MS/All_resolutions_UMAP.pdf", width = 6, height = 5)
 
-#save 
-p_res03=DimPlot(MS_obj,group.by = "res_0.3",label = TRUE,reduction = "umap" )+ ggtitle("Resolution: 0.3")
+for (res in res_cols) {
+  p <- DimPlot(MS, group.by = res, label = TRUE, reduction = "umap") +
+       ggtitle(paste("Resolution:", res))
+  
+  print(p)
+}
+
+dev.off()
+
+#save the chooseen one 
+p_res03=DimPlot(MS,group.by = "res_0.3",label = TRUE,reduction = "umap" )+ ggtitle("Resolution: 0.3") +
+  NoLegend()
 ggsave(filename = "output/Multiple_Sclerosis/MSresolution.png",plot = p_res03,width = 12,height = 8,dpi = 300)
 
 ```
@@ -104,30 +128,65 @@ ggsave(filename = "output/Multiple_Sclerosis/MSresolution.png",plot = p_res03,wi
 
 
 
-###3-clusters and find all markers
+###5-clusters and find all markers
 ```{r}
 ##cluster......
-MS_obj=FindNeighbors(MS_obj,reduction ="pca",dims = 1:30)
-MS_obj=FindClusters(MS_obj, resolution = 0.3)
+MS=FindNeighbors(MS,reduction ="pca",dims = 1:30)
+MS=FindClusters(MS, resolution = 0.3)
 ##markers, apply the filtering and save
-MS_markers=FindAllMarkers(MS_obj,only.pos = TRUE,min.pct = 0.25,logfc.threshold = 0.25)
+MS_markers=FindAllMarkers(MS,only.pos = TRUE,min.pct = 0.25,logfc.threshold = 0.25)
 MS_markers=MS_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-write.xlsx(MS_markers,file = "output/Multiple_Sclerosis/MS_markers.xlsx")
+
 
 ```
 
-
-
-###4-Annotation based on markers genes
-
+###6-Annotation based on markers genes
 
 ```{r}
-##plots with the markers 
-##marker used to make gice cellname
-genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
+genes = c(
+  # CD4 T cells
+  "CD4", "TCF7", "SELL", "CD3D", "CD3E", "TRAC",#TRAC,CD3E,CD3D express also in CD8 T cells
+  
+  # CD8 T cells
+  "CD8A", "CD8B", "GZMB", 
+
+  # B cells
+  "MS4A1", "CD79A", "CD79B", 
+  
+  # plasma cells
+  "MZB1", "JCHAIN",
+  
+  # mon/mac
+  "CD14", "CD36", "FCGR1A", "LYZ", "CD68", "CLEC9A", "CSF1R",
+
+  # Microglia
+  "P2RY12", "TMEM119", "CX3CR1",
+  "SPP1", "GPNMB", "APOE", "ITGAX", "CST7",
+
+  # Astrocytes
+  "GFAP", "AQP4", "ALDH1L1", "SLC1A2", "C3",
+
+  # Oligodendrocytes
+  "MBP", "PLP1", "MOG", "MOBP", "MAL",
+
+  # OPCs
+  "PDGFRA", "CSPG4",
+
+  # Endothelial
+  "PECAM1", "VWF", "CLDN5",
+
+  # Pericytes
+  "PDGFRB", "RGS5",
+  
+  # Fibroblasts
+  "LUM", "DCN", "ACTA2",
+
+  # Neurons
+  "RBFOX3", "MAP2", "SNAP25"
+)
 
 p=DotPlot(
-  MS_obj,
+  MS,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
@@ -141,11 +200,53 @@ p=DotPlot(
   scale.max = NA,
   cluster.idents = T, 
   group.by = "seurat_clusters") + RotatedAxis() 
+
 p
-ggsave(filename = "output/Multiple_Sclerosis/MScluster.png", plot = p, width = 10, height = 8)
+
+```
+
+ 
+ 
+```{r}
+
+#########check expression to see if we need subcluster or not 
+##feature plots
+l = FeaturePlot(MS,features = unique(genes), combine = F, order = T)
+names(l) = unique(genes)             
+ 
+        
+
+```
+  
+
+
+```{r}
+###Sub_clustering 
+Idents(MS_obj) <- "seurat_clusters"
+-------11
+ MS <-FindSubCluster(
+  MS,                                      
+  cluster = "11",                              
+  graph.name = "RNA_snn",                    
+  subcluster.name = "sub.11",
+  resolution = 0.05,
+  algorithm = 1
+)
+ #use genes to annotate
+FeaturePlot(MS_obj, features = c("RGS5","VWF"))
+
+#create new_col and replace 11 with new sub
+MS$Final_Cluster <- as.character(MS$seurat_clusters)
+MS$Final_Cluster[MS_obj$seurat_clusters == "11"] <- MS$sub.11[MS$seurat_clusters == "11"]
+table(MS$Final_Cluster)
+#CLEAN colyou dont want and keep others
+colnames(MS@meta.data) 
+
+
 
 
 ```
+
 
 
 
@@ -153,14 +254,8 @@ ggsave(filename = "output/Multiple_Sclerosis/MScluster.png", plot = p, width = 1
 ```{r, fig.width=12, fig.height=8}
 
 ##match the celltype with each cluster specifique
-#---cluster
 
-##marker used to make gice cellname
-genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
-
-
-
-Idents(MS_obj)="seurat_clusters"
+Idents(MS)="Final_Cluster"
 cluster_name_x = c(
   "0"="Oligodendrocytes_0",
   "1"="Oligodendrocytes_1",
@@ -168,52 +263,48 @@ cluster_name_x = c(
   "3"="Oligodendrocytes_3",
   "4"="Oligodendrocytes_4",
   "5"="Astrocytes_5",
-  "6"="Microgalia_6",
+  "6"="Microglia_6",
   "7"="Oligodendrocytes_7",
   "8"="OPC_8",
   "9"="Neurons_9",
-  "10"="Monocytes/DC_10",
-  "11"="Vascular Cells_11",
-  "12"="Astrocytes_12"
-  ,"13"="Astrocytes_13",
+  "10"="Microglia_10",
+  "11_0"="Endothelial Cells_11_0",
+  "11_1"="Mural Cells_11_1",
+  "12"="Astrocytes_12",
+  "13"="Astrocytes_13",
   "14"="Neurons_14",
-  "15"="Neurons_15",
+  "15"="Astrocytes_15",
   "16"="Astrocytes_16",
-  "17"="Microgalia_17",
-  "18"="Pericytes_18",
-  "19"="Oligodendrocytes_19"
+  "17"="Microglia_17",
+  "18"="Fibroblasts_18",
+  "19"="CD8_19"
   )
-MS_obj=RenameIdents(MS_obj, cluster_name_x)
-MS_obj$celltype=Idents(MS_obj)
-
-
-
-p=DotPlot(
-  MS_obj,
+MS=RenameIdents(MS, cluster_name_x)
+MS$CellType = Idents(MS)
+p <- DotPlot(
+  MS,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
   col.max = 2.5,
   dot.min = 0,
   dot.scale = 6,
-  split.by = NULL,
-  scale = TRUE,
-  scale.by = "radius",
-  scale.min = NA,
-  scale.max = NA,
-  cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis() 
+  group.by = "CellType"
+) + RotatedAxis()
+
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
 #save
-ggsave(filename = "output/Multiple_Sclerosis/MS_cluster_name.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/MS/MS_cluster.png", plot = p, width = 12, height = 7)
 
 
 ```
 
 
-
-
-
-
+  
 
 
 ```{r}
@@ -221,7 +312,7 @@ ggsave(filename = "output/Multiple_Sclerosis/MS_cluster_name.png", plot = p, wid
 ##-----umap--------------
 
 #1-celltype for the umap
-Idents(MS_obj)="seurat_clusters"
+Idents(MS)="Final_Cluster"
 cluster_name = c(
   "0"="Oligodendrocytes",
   "1"="Oligodendrocytes",
@@ -229,53 +320,54 @@ cluster_name = c(
   "3"="Oligodendrocytes",
   "4"="Oligodendrocytes",
   "5"="Astrocytes",
-  "6"="Microgalia",
+  "6"="Microglia",
   "7"="Oligodendrocytes",
   "8"="OPC",
   "9"="Neurons",
-  "10"="Monocytes/DC",
-  "11"="Vascular Cells",
-  "12"="Astrocytes"
-  ,"13"="Astrocytes",
+  "10"="Microglia",
+  "11_0"="Endothelial Cells",
+  "11_1"="Mural Cells",
+  "12"="Astrocytes",
+  "13"="Astrocytes",
   "14"="Neurons",
-  "15"="Neurons",
+  "15"="Astrocytes",
   "16"="Astrocytes",
-  "17"="Microgalia",
-  "18"="Pericytes",
-  "19"="Oligodendrocytes"
+  "17"="Microglia",
+  "18"="Fibroblasts",
+  "19"="CD8"
   )
-MS_obj=RenameIdents(MS_obj, cluster_name)
-MS_obj$celltype=Idents(MS_obj)
+MS=RenameIdents(MS, cluster_name)
+MS$Major_Celltype=Idents(MS)
 
 ##2
 ##change cluster_name
 celltype_cols=c(
   "Oligodendrocytes"      = "#E41A1C",
   "Astrocytes"            = "#4B2EFF",
-  "Microgalia"            = "#E6F04A",
+  "Microglia"             = "#E6F04A",
   "OPC"                   = "#E7298A",
   "Neurons"               = "#66E5B4",
-  "Monocytes/DC"           ="#550000",
-  "Pericytes"             = "#0093CC",            
-  "Vascular cells"        = "#E67E22"
+  "CD8"                   = "#0093CC",            
+  "Endothelial Cells"     = "#E67E22",
+  "Mural Cells"           = "tomato",
+  Fibroblasts             = "gold"
 
 )
 ##3 center
-umap_df=as.data.frame(Embeddings(MS_obj, "umap"))
-umap_df$celltype=MS_obj$celltype
+umap_df=as.data.frame(Embeddings(MS, "umap"))
+umap_df$Major_Celltype=MS$Major_Celltype
 centers <- aggregate(
-  cbind(umap_1, umap_2) ~ celltype,
+  cbind(umap_1, umap_2) ~ Major_Celltype,
   data = umap_df,
   FUN = median
 )
 ##plot
-library(ggrepel)
-fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
+fig1a = ggplot(umap_df, aes(umap_1, umap_2, color = Major_Celltype)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
     data = centers,
-    aes(x = umap_1, y = umap_2, label = celltype),
+    aes(x = umap_1, y = umap_2, label = Major_Celltype),
     inherit.aes = FALSE,
     fill = "white",
     color = "black",
@@ -292,7 +384,7 @@ fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
   ) +
   labs(x = "umap 1", y = "umap 2")
 fig1a
-ggsave(filename = "output/Multiple_Sclerosis/MScellT.png", plot = fig1a, width = 12, height = 8)
+ggsave(filename = "output/MS/MS_CellType.png", plot = fig1a, width = 12, height = 8)
 
 ```
 
@@ -301,97 +393,48 @@ ggsave(filename = "output/Multiple_Sclerosis/MScellT.png", plot = fig1a, width =
 
 
 
-```{r,fig.width=10,fig.height=8}
+```{r}
 
-##plots with the markers 
-##marker used to make gice cellname
-genes = c("AQP4","GFAP","VIM","ABCA1","VCAN","HSP90AA1","SOX6","HSPA1A","PLP1","MOG","MAG","TNS3","CD81","LINGO1","LAIR1","LAIR2","C1QA","C1QB","C1QC","SERPING1","C1S","ITGB1","SYT1","PDGFRA","CD83","CLDN5")
-
-p=DotPlot(
-  MS_obj,
+#plot with markers...........
+p <- DotPlot(
+  MS,
   features = genes,
   cols = c("lightgrey", "blue"),
   col.min = -2.5,
   col.max = 2.5,
   dot.min = 0,
   dot.scale = 6,
-  split.by = NULL,
-  scale = TRUE,
-  scale.by = "radius",
-  scale.min = NA,
-  scale.max = NA,
-  cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis() 
-p
-#ggsave(filename = "output/Multiple_Sclerosis/MSmarkers.png", plot = p, width = 12, height = 8)
+  group.by = "Major_Celltype"
+) + RotatedAxis()
 
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-###5-proportion
-```{r}
-###-------cell proportion
-
- prop_df=MS_obj@meta.data |>
-  as_tibble() |>
-  dplyr::count(celltype) |>
-  dplyr::mutate(
-    proportion = n / sum(n),
-    percent = proportion * 100
-  )
-
-prop_df$celltype=factor(
-  prop_df$celltype,
-  levels = prop_df$celltype[order(prop_df$proportion, decreasing = TRUE)]
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
 )
 
-fig1c = ggplot(prop_df, aes(x = celltype, y = proportion, fill = celltype)) +
-  geom_col(width = 0.8) +
-  geom_text(
-    aes(label = paste0(round(percent, 1), "%")),
-    vjust = -0.3,
-    size = 3
-  ) +
-  scale_fill_manual(values = celltype_cols) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  ylab("Cell proportion") +
-  xlab("")
-fig1c
-ggsave(filename = "output/Multiple_Sclerosis/MSproportion.png", plot = fig1c, width = 12, height = 8)
+ggsave(filename = "output/MS/MS_markers.png", plot = p, width = 12, height = 8)
+
 
 ```
 
 
 
+
+
+###7Correlation
 ```{r}
 
 ##correlation between celltype
 #1 Set identities to cell types
-Idents(MS_obj) = "celltype"
+Idents(MS) = "Major_Celltype"
 
 #to see cellname
-levels(Idents(MS_obj))
+levels(Idents(MS))
 
 
 #2 Identify highly variable genes
-MS_obj = FindVariableFeatures(MS_obj, nfeatures = 10000)
-hvg = VariableFeatures(MS_obj)[1:5000]
+MS = FindVariableFeatures(MS, nfeatures = 10000)
+hvg = VariableFeatures(MS)[1:5000]
 
 #3 Average expression using HVGs
 av_expMS = AverageExpression(
@@ -408,12 +451,12 @@ correlation_matrix <- cor(
   use = "pairwise.complete.obs"
 )
 
-# safety cleanup
+# clean
 correlation_matrix[is.na(correlation_matrix)] = 0
 
 #5 Save 
 png(
-  filename = "output/Multiple_Sclerosis/MS_celltype_corr.png",
+  filename = "output/MS/MS_correlation.png",
   width = 3000,
   height = 2400,
   res = 300
@@ -433,54 +476,78 @@ dev.off()
 
 
 
+###8 Class Major_Celltype with family
 
-
-
-
-
-###-Save the clean meta.data wtih all the final information
 ```{r}
-#create a file with the raw_count,processed, the metadata and the active_id
-##check the information
 
-MS_obj$orig.ident="Multiple Sclerosis"
+#EXTRACT
+unique(MS$Major_Celltype)
 
-
-# Remove column i don't want to keep
-cols_to_remove <- c(
-  grep("res_|RNA_snn_res", colnames(MS_obj@meta.data), value = TRUE),
-  "cell_type"
+MS_obj$General <- recode(MS_obj$Major_Celltype,
+  "Oligodendrocytes" = "Glial Cells",
+  "Endothelial Cells" = "Endothelial Cells",
+  "OPC" = "Glial Cells",
+  "CD8" = "CD8",
+  "Astrocytes" = "Glial Cells", 
+  "Fibroblasts" = "Fibroblasts", 
+  "Microglia" = "Mono/Mac", 
+  "Mural Cells" = "Mural Cells", 
+  "Neurons" = "Neurons", 
 )
-MS_obj@meta.data <- MS_obj@meta.data[, !(colnames(MS_obj@meta.data) %in% cols_to_remove)]
-###
-MS_obj$celltype = Idents(MS_obj)
-Idents(MS_obj)=MS_obj$celltype
-saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_Final.rds")
-MS_obj= readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_Final.rds")
-# Optional CSV 
-write.csv(MS_obj@meta.data, 
-          file = "data/process/SeuratObjects/Multiple_Sclerosis//MS_Final.csv",
-          row.names = TRUE)
-View(MS_obj@meta.data)
-
-
-
-
+View(MS@meta.data)
 
 ```
 
 
-###Save the process
+##TLS Markers
+
+```{r, fig.width=12, fig.height=8}
+#----------
+markers <- c(
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
+ 
+#AID, S1PR2, IL8, IL12, IL17, TGFB, CD54, GLYCAM1, ANKRD43, CD21 : missing
+  
+p <- DotPlot(
+  MS,
+  features = markers,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "General"
+) + RotatedAxis()
+
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
+)
+
+ggsave(filename = "output/MS/TLS_markers.png", plot = p, width = 12, height = 8)
+
+```
+
+
+
+
+
+
+
+
+###-Save rds file
 ```{r}
-###save
-saveRDS(MS_obj, file = "data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+#csv
+write.csv(MS@meta.data, 
+          file = "data/process/SeuratObjects/MS//MS_Final.csv",
+          row.names = TRUE)
+#rds
+saveRDS(MS, file = "data/process/SeuratObjects/MS/MS_process.rds")
 
 ## run it later to load all 
-#MS_obj = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")
+MS = readRDS("data/process/SeuratObjects/MS/MS_process.rds")
+
 ```
-
-
-
 
 
 

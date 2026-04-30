@@ -6,18 +6,29 @@ output: html_notebook
 #####ANALYSE OF PANCREAS TYPE 1 DIABETES#######################################################################################
 ################################################################################################################################
 
-```{r,setup, include=FALSE}
+```{r  setup, include=FALSE}
 ##################PACKAGES
-library(pacman)
-  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,hdf5r,DropletUtils)
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+
+
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
 ```
 
 
-#####STEP_1
-###LOAD the data
+
+###1 LOAD the data
 ```{r}
 ##load the data and set only the T1D
 T1D=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Pancreas Type 1 Diabetes/Pancreas Type 1 Diabetes.rds")
@@ -33,9 +44,8 @@ saveRDS (T1D,file = "data/process/SeuratObjects/T1Diabetes/T1D_raw.rds")
 
 ```
 
-####STEP_2:PROCESS AND ANALYSE THE RAW_FILE
 
-###1-FOR THE QC
+###12-FOR THE QC
 ```{r}
 ##load and process
 T1D[["percent.mt"]]=PercentageFeatureSet(T1D, pattern = "^MT-")
@@ -48,7 +58,7 @@ T1D=subset(T1D, subset=nFeature_RNA >300 & nFeature_RNA <7000 & percent.mt<10)
 ```
 
 
-###2 statistics
+###3 statistics
 ```{r}
 ##norm, fvf,scale,runpca
 
@@ -63,17 +73,14 @@ DimPlot(T1D,reduction = "umap", label = TRUE)
 ```
 
 
-###3.integration
+###4.integration
 ```{r}
-##integration
+
+#----------
 library(harmony)
-T1D=RunHarmony(T1D,group.by.vars = "sample_id",orig.reduction = "pca",dims.use = 1:30  )
-
-
+T1D=RunHarmony(T1D,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
 T1D = RunUMAP(T1D, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-p=DimPlot(T1D,reduction = "umap.harmony",group.by = c("sample_id"),label.size = 2, shuffle = T)
-ggsave(filename = "output/T1Diabetes/T1D.integration.png", plot=p, width = 12, height = 8)
-p
+
 
 #for the resolution
 T1D=FindNeighbors(T1D,reduction= "harmony",dims = 1:30)
@@ -85,44 +92,98 @@ for (res in seq(0.2, 1, by = 0.1)) {
 res_cols=grep("^res_", colnames(T1D@meta.data), value = TRUE)
 for (res in res_cols) {
   p=DimPlot(T1D, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+       ggtitle(paste(res))
   print(p)
   readline(prompt="Press [Enter] to see the next resolution...")
+  
 }
+
+#save all
+pdf("output/T1D/All_resolutions_UMAP.pdf", width = 6, height = 5)
+for (res in res_cols) {
+  p <- DimPlot(T1D, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+}
+dev.off()
+
 #save 
-p=DimPlot(T1D,group.by = "res_0.4",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.4")
-ggsave(filename = "output/T1Diabetes/T1Dresolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p=DimPlot(T1D,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6") +NoLegend()
+ggsave(filename = "output/T1D/T1D_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
+
 ```
 
 
-##4-cluster and markers
+##5-cluster and markers
 ```{r}
 
 ###clusters
 T1D=FindNeighbors(T1D,reduction= "harmony",dims = 1:30)
-T1D=FindClusters(T1D, resolution = 0.4,cluster.name = "harmony_clusters")
+T1D=FindClusters(T1D, resolution = 0.6,cluster.name = "harmony_clusters")
 #markers
 T1Dmarkers=FindAllMarkers(T1D,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
 T1Dmarkers=T1Dmarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-write.xlsx(T1Dmarkers,file = "output/T1Diabetes/T1Dmarkers.xlsx")
-View(T1Dmarkers)
+
 
 
 
 ```
 
 
-Acinar cells (PRSS1 high), Alpha cells (GCG high), Beta cells (INS high), Delta cells (SST high), Ductal
-cells (KRT19 high), Endothelial cells (VWF high), Epsilon cells (GHRL high), Immune (NCF2 high), PP
-cells (PPY high), Stellates cells (COL1A1 high)
 
 
-###5 annotation
+
+###6 annotation
 
 ```{r}
-#
-#--------markers------
-genes=c("PRSS1","GCG","INS","SST","KRT19","VWF","GHRL","NCF2","COL1A1","PPY")
+genes = c(
+  # Acinar cells
+  "PRSS1","CPA1","PTF1A",
+
+  # Alpha cells
+  "GCG","IRX2","ARX",
+
+  # Beta cells
+  "INS","MAFA","NKX6-1",
+
+  # Delta cells
+  "SST","LEPR",
+
+  # Ductal cells
+  "KRT19","SOX9","CFTR",
+
+  # Endothelial cells
+  "VWF",
+
+  # Epsilon cells
+  "GHRL",
+
+  # Immune cells
+  "NCF2","PTPRC","CD14", "FCGR3A","CD68", "LYZ", "CSF1R",
+  
+  # CD4 T cells
+  "CD4", "TCF7", "SELL", "CD3D", "CD3E", "TRAC",
+  
+  # CD8 T cells
+  "CD8A", "CD8B", "GZMB", 
+
+  # B cells
+  "MS4A1", "CD79A", "CD79B", 
+  
+  # plasma cells
+  "MZB1", "JCHAIN",
+
+  # PP (gamma) cells
+  "PPY",
+  
+  # "Pericytes"
+  "RGS5",
+
+  # Stellate cells
+  "COL1A1",
+  #fibroblasts
+  "DCN"
+)
 
 p=DotPlot(
   T1D,
@@ -141,10 +202,16 @@ p=DotPlot(
   group.by = "harmony_clusters") + RotatedAxis() 
 p
 #save
-ggsave(filename = "output/T1Diabetes/T1Dcluster.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/T1D/T1D_cluster.png", plot = p, width = 12, height = 8)
 
 ```
 
+
+
+```{r}
+l = FeaturePlot(T1D, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
+names(l) = unique(genes)
+```
 
 
 
@@ -159,27 +226,30 @@ ggsave(filename = "output/T1Diabetes/T1Dcluster.png", plot = p, width = 12, heig
 ##1celltype
 Idents(T1D)="harmony_clusters"
 cluster_name_x=c(
-  "0"  = "Alpha cells_0" ,
-  "1"  = "Ductal cells_1"    ,
-  "2"  = "Acinar cells_2"            ,
-  "3"  = "Acinar cells_3"      ,
-  "4"  = "Acinar cells_4"    ,
-  "5"  = "Beta cells_5"            ,
-  "6"  = "Endothelial cells_6"            ,
-  "7"  = "Alpha cells_7"            ,
-  "8"  = "Stellate cells_8"             ,
-  "9"  = "Acinar cells_9"               ,
-  "10" = "Acinar cells_10"        ,
-  "11" = "Acinar cells_11"    ,
-  "12" = "Acinar cells_12"    ,
-  "13" = "Ductal cells_13"           ,
-  "14" = "Alpha cells_14"             ,
-  "15" = "Stellate cells_15"            
+  "0"  = "Ductal Cells_0" ,
+  "1"  = "Acinar Cells_1"    ,
+  "2"  = "Alpha Cells_2"            ,
+  "3"  = "Acinar Cells_3"      ,
+  "4"  = "Alpha Cells_4"    ,
+  "5"  = "Delta Cells_5"            ,
+  "6"  = "Acinar Cells_6"            ,
+  "7"  = "Endothelial Cells_7"            ,
+  "8"  = "Fibroblasts_8"             ,
+  "9"  = "Acinar Cells_9"               ,
+  "10" = "Alpha Cells_10"        ,
+  "11" = "Ductal Cells_11"    ,
+  "12" = "Mural Cells_12"    ,
+  "13" = "Macrophages_13"           ,
+  "14" = "Acinar Cells_14"             ,
+  "15" = "Ductal Cells_15"  ,
+  "16" ="Acinar Cells_16",
+  "17" ="Acinar Cells_17",
+  "18" = "Fibroblasts_18"
   
 )
 
 T1D=RenameIdents(T1D, cluster_name_x)
-T1D$celltype=Idents(T1D)
+T1D$CellType=Idents(T1D)
 
 #plot
 p=DotPlot(
@@ -196,10 +266,13 @@ p=DotPlot(
   scale.min = NA,
   scale.max = NA,
   cluster.idents = T, 
-  group.by = "celltype") + RotatedAxis() 
+  group.by = "CellType") + RotatedAxis() 
 p
 #save
-ggsave(filename = "output/T1Diabetes/T1D_cluster_name.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/T1D/T1D_cluster_name.png", plot = p, width = 12, height = 8)
+
+#View(T1D@meta.data)
+
 
 
 ```
@@ -215,75 +288,77 @@ ggsave(filename = "output/T1Diabetes/T1D_cluster_name.png", plot = p, width = 12
 ##1celltype
 Idents(T1D)="harmony_clusters"
 cluster_name=c(
-  "0"  = "Alpha cells" ,
-  "1"  = "Ductal cells"    ,
-  "2"  = "Acinar cells"            ,
-  "3"  = "Acinar cells"      ,
-  "4"  = "Acinar cells"    ,
-  "5"  = "Beta cells"            ,
-  "6"  = "Endothelial cells"            ,
-  "7"  = "Alpha cells"            ,
-  "8"  = "Stellate cells"             ,
-  "9"  = "Acinar cells"               ,
-  "10" = "Acinar cells"        ,
-  "11" = "Acinar cells"    ,
-  "12" = "Acinar cells"    ,
-  "13" = "Ductal cells"           ,
-  "14" = "Alpha cells"             ,
-  "15" = "Stellate cells"            
+ "0"  = "Ductal Cells" ,
+  "1"  = "Acinar Cells"    ,
+  "2"  = "Alpha Cells"            ,
+  "3"  = "Acinar Cells"      ,
+  "4"  = "Alpha Cells"    ,
+  "5"  = "Delta Cells"            ,
+  "6"  = "Acinar Cells"            ,
+  "7"  = "Endothelial Cells"            ,
+  "8"  = "Fibroblasts"             ,
+  "9"  = "Acinar Cells"               ,
+  "10" = "Alpha Cells"        ,
+  "11" = "Ductal Cells"    ,
+  "12" = "Mural Cells"    ,
+  "13" = "Macrophages"           ,
+  "14" = "Acinar Cells"             ,
+  "15" = "Ductal Cells"  ,
+  "16" ="Acinar Cells",
+  "17" ="Acinar Cells",
+  "18" = "Fibroblasts"      
+             
 )
 
 T1D=RenameIdents(T1D, cluster_name)
-T1D$celltype=Idents(T1D)
+T1D$Major_Celltype=Idents(T1D)
 ##2color
 celltype_cols=c(
-  "Acinar cells"            = "#D73027",  
-  "Alpha cells"             = "#4575B4", 
-  "Ductal cells"            = "#FDAE61",  
-  "Delta cells"             = "#762A83",
-  "Endothelial cells"       = "#66A61E",
-  "Stellate cells"          = "#FFD92F"
+  "Acinar Cells"            = "#D73027",  
+  "Alpha Cells"             = "#4575B4", 
+  "Ductal Cells"            = "#FDAE61",  
+  "Delta Cells"             = "#762A83",
+  "Endothelial Cells"       = "#66A61E",
+  "Stellate Cells"          = "#FFD92F",
+  "Macrophages"             = "tomato",
+  "Fibroblasts"             ="blue",
+  "Mural Cells"             ="cyan"
   )
 
+colnames(Embeddings(T1D, "umap.harmony"))
 ##3 center
-##3 center
-umap_df=as.data.frame(Embeddings(T1D, "umap.harmony"))
-colnames(umap_df)=c("umap_1", "umap_2")
-umap_df$celltype=T1D$celltype
-centers=aggregate(
-  cbind(umap_1, umap_2) ~ celltype,
+umap_df <- as.data.frame(Embeddings(T1D, "umap.harmony"))
+umap_df$Major_Celltype <- T1D$Major_Celltype
+
+centers <- aggregate(
+  cbind(umapharmony_1, umapharmony_2) ~ Major_Celltype,
   data = umap_df,
   FUN = median
 )
-
-##supp duplicate and plot
-library(ggrepel)
-suppressWarnings({
-  fig1a=ggplot(umap_df, aes(umap_1, umap_2, color = celltype)) +
-    geom_point(size = 0.3) +
-    scale_color_manual(values = celltype_cols) +
-    geom_label_repel(
-      data = centers,
-      aes(x = umap_1, y = umap_2, label = celltype),
-      inherit.aes = FALSE,
-      fill = "white",
-      color = "black",
-      size = 4,
-      box.padding = 0.4,
-      label.size = 0.25,
-      segment.color = NA,
-      max.overlaps = Inf
-    ) +
-    theme_classic() +
-    theme(
-      axis.text = element_blank(),
-      axis.ticks = element_blank(),
-      legend.position = "none"
-    ) +
-    labs(x = "umap 1", y = "umap 2")
-})
+##plot
+fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+  geom_point(size = 0.3) +
+  scale_color_manual(values = celltype_cols) +
+  geom_label_repel(
+    data = centers,
+    aes(x = umapharmony_1, y = umapharmony_2, label = Major_Celltype),
+    inherit.aes = FALSE,
+    fill = "white",
+    color = "black",
+    size = 4,
+    box.padding = 0.4,
+    label.size = 0.25,
+    segment.color = NA
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "umapharmony_1", y = "umapharmony_2")
 fig1a
-ggsave(ggsave(filename = "output/T1Diabetes/T1DcellT.png", plot = fig1a, width = 12, height = 8))
+ggsave(ggsave(filename = "output/T1D/T1D_cellType.png", plot = fig1a, width = 12, height = 8))
 
 ```
 
@@ -315,8 +390,7 @@ library(grid)
 library(plyr)
 library(pheatmap)
 
-# folder
-dir.create("output/T1Diabetes", recursive = TRUE, showWarnings = FALSE)
+
 
 # -------------------------------
 # 1️⃣ Correlation heatmap (optional)
@@ -349,7 +423,7 @@ correlation_matrixSS_jitter <- correlation_matrixSS +
 # Save correlation heatmap as PNG
 
 png(
-  filename = "output/T1Diabetes/T1Dcorr_matrix.png",
+  filename = "output/T1D/T1D_correlation.png",
   width = 3100,
   height = 2200,
   res = 300
@@ -358,19 +432,15 @@ png(
 pheatmap(
   correlation_matrixSS_jitter,
   clustering_method = "ward.D2",
-  main = "Correlation between Cell Types",
   fontsize_row = 8,
-  fontsize_col = 8,
-  filename = "output/T1Diabetes/T1Dcorr_matrix.png"
+  fontsize_col = 8
 )
 dev.off()
 # -------------------------------
 # 2️⃣ Dot heatmap (ComplexHeatmap)
 # -------------------------------
 
-# Make sure you have defined these:
-# genes <- c(...)  # your genes of interest
-# cluster_name <- c(...)  # mapping of cluster IDs to cell types
+
 
 T1D$celltype <- mapvalues(as.character(Idents(T1D)), 
                           from = names(cluster_name), 
@@ -444,7 +514,7 @@ ht=Heatmap(
 # 3️⃣ Save ComplexHeatmap as PNG
 # -------------------------------
 
-png(filename = "output/T1Diabetes/T1Dcorr_dotheatmap.png",
+png(filename = "output/T1D/T1D_markers.png",
     width = 3100, height = 2200, res = 300)
 draw(ht)
 dev.off()
@@ -454,189 +524,98 @@ dev.off()
 
 
 
-###7 proportion of Donors
-```{r}
-library(dplyr)
-library(ggplot2)
-library(scales)
 
-#change colname 
-T1D$Donors = T1D$sample_id
+##markers that we can have in TLS 
+```{r, fig.width=12, fig.height=8}
+#----------
+markers <- c(
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
 
-#create the meta data
-meta = T1D@meta.data[, c("harmony_clusters", "Donors")]
-table(meta$Donors)
+p <- DotPlot(
+  T1D,
+  features = markers,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  group.by = "Major_Celltype"
+) + RotatedAxis()
 
-# Make sure dplyr functions are used explicitly
-meta = T1D@meta.data
-
-#the  percentage 
-donors_counts = meta %>%
-  as_tibble() %>%
-  dplyr::group_by(harmony_clusters,Donors) %>% #count cells each donor use in each cluster
-  dplyr::summarise( n= dplyr::n(),.groups = "drop") %>% #numb of cells
-  dplyr::group_by(harmony_clusters) %>%
-  dplyr::mutate(proportion = n /sum(n))  #fraction of cells per donor
-```
-
-
-
-```{r}
-
-###plot
-p = ggplot(donors_counts, aes(
-  x = harmony_clusters,
-  y = proportion,
-  group = Donors,
-  color = Donors
-)) +
-  geom_line(linewidth = 0.9, alpha = 0.9) +
-  geom_point(size = 2.8, alpha = 0.9) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_color_viridis_d(option = "turbo", name = "Donor") +
-  theme_minimal(base_size = 13) +
-  labs(
-    title = "Donors Proportion",
-    x = "Cluster",
-    y = "Proportion (%)"
-  ) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "right"
-  )
-p
-
-ggsave(filename = "output/T1Diabetes/T1DDonor.png", plot = p, width = 12, height = 8)
-```
-
-
-
-
-```{r}
-##proportion of cells
-
-library(dplyr)
-library(ggplot2)
-# Use explicit dplyr:: functions to avoid masking issues
-prop_df=dplyr::as_tibble(T1D@meta.data) %>%
-  dplyr::count(sample_id, celltype) %>%
-  dplyr::group_by(sample_id) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-
-##rename col
-T1D_meta <- dplyr::as_tibble(T1D@meta.data) %>%
-  dplyr::rename(sample_id = sample_id)   # rename to avoid conflicts
-prop_df=T1D_meta %>%
-  dplyr::count(sample_id, celltype) %>%
-  dplyr::group_by(sample_id) %>%
-  dplyr::mutate(proportion = n / sum(n)) %>%
-  dplyr::ungroup()
-##plot
-fig1c=ggplot(
-  prop_df,
-  aes(x = celltype, y = proportion, color = celltype)
-) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, size = 2) +
-  scale_color_manual(values = celltype_cols) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  ylab("Proportion") +
-  xlab("")
-fig1c
-ggsave(filename = "output/T1Diabetes/T1Dproportion.png", plot = fig1c, width = 12, height = 10)
-
-```
-
-
-```{r}
-#genes
-###with the markers another plot type
-
-
-# Create DotPlot but prevent automatic flipping
-p1=DotPlot(T1D, features = genes, assay = "RNA") + 
-  labs(x = "Genes", y = "Cell types") +
-  scale_color_gradientn(colours = c('#330066','#336699','#66CC66','#FFCC33')) +
-  guides(size = guide_legend("Percent Expression")) +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    axis.text.y = element_text(size = 10)
-  )
-p1=p1 + aes(x = features.plot, y = id)  # 'id' = cell type, 'features.plot' = gene
-p1
-
-```
-
-
-
-
-###save the final meta.data
-```{r}
-
-##save
-# Keep your existing metadata names
-T1D$orig.ident="Type 1 Diabete"
-
-# Remove unwanted columns 
-cols_to_remove=c(
-  grep("res_|RNA_snn_res", colnames(T1D@meta.data), value = TRUE),
-  "cell_type",
-  "iscell_ed",
-  "iscell_dd",
-  "Donors",
-  "seurat_clusters",
-  "x",
-  "scDblFinder.sample",
-  "scDblFinder.score",
-  "scDblFinder.weighted",
-  "scDblFinder.csds_sample",
-  "nCount_SCT",
-  "nFeature_SCT",
-  "SCT_sn_res.0.8",
-  "SCT_snn_res.0.8",
-  "scDblFinder.cxds_score",
-  "scDblFinder.class",
-  "disease_state",
-  "hpap_id"
+p <- p + theme(
+  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
+  axis.text.y = element_text(size = 9, face = "bold")
 )
-T1D@meta.data=T1D@meta.data[, !(colnames(T1D@meta.data) %in% cols_to_remove)]
+ ggsave(filename = "output/T1D/TLS_markers.png", plot = p, width = 12, height = 8)
+ 
+```
 
-# Ensure active identity reflects your celltype
-Idents(T1D)=T1D$celltype
 
-# Save 
-saveRDS(T1D, file = "data/process/SeuratObjects//T1D_Final.rds")
+###7 Class Major_Celltype with family
 
-# Save only the final metadata 
-saveRDS(T1D@meta.data, file = "data/process/SeuratObjects/T1Diabetes/T1D_obj.metadata.rds")
 
-# Optional CSV 
-write.csv(T1D@meta.data, 
-          file = "data/process/SeuratObjects/T1Diabetes/T1D.metadata.csv",
-          row.names = TRUE)
-View(T1D@meta.data)
+```{r}
+#------
+#extract
+unique(T1D$Major_Celltype)
+
+#
+T1D$General <- recode(T1D$Major_Celltype,
+                      "Ductal Cells"="Epithelial Cells" ,
+                      "Acinar Cells" ="Epithelial Cells",
+                      "Alpha Cells" ="Endocrine Cells" ,
+                      "Fibroblasts" ="Fibroblasts",
+                      "Endothelial Cells"="Endothelial Cells",
+                      "Delta Cells"  ="Endocrine Cells",
+                      "Mural Cells"  ="Mural Cells",
+                      "Macrophages" ="Mono/Mac"
+)
+
 ```
 
 
 
 
 
-###save
+
+
 ```{r}
+
 ##save
-#saveRDS(T1D, file="data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+
+
+keep_cols <- c(
+  "orig.ident",
+  "nCount_RNA",
+  "nFeature_RNA",
+  "sample",
+  "harmony_clusters",
+  "CellType",
+  "Major_Celltype",
+  "General"
+)
+
+T1D@meta.data <- T1D@meta.data[, keep_cols]
+
+#CSV 
+write.csv(T1D@meta.data,file = "data/process/SeuratObjects/T1D/T1D.metadata.csv",row.names = TRUE) 
+          
+##rds
+saveRDS(T1D, file="data/process/SeuratObjects/T1D/T1D_process.rds")
+View(T1D@meta.data)
 
 #load it
-#T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
+#T1D = readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
+
+
+
+
 ```
+
+
+
+
+
 
 
 
