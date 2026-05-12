@@ -1,0 +1,435 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+
+
+
+######SINGLE CELLS ANALYSIS WITH SEURAT FUNCTIONS###########
+
+
+```{r,setup, include=FALSE}
+
+##################PACKAGES
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+```
+
+
+```{r}
+##packages
+
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+library(Matrix)
+library(DropletUtils)
+library(presto)
+library(gprofiler2)
+library(cowplot)
+library(plyr)
+library(scDblFinder)
+library(BiocParallel)
+
+```
+
+
+
+##1.load data
+```{r}
+###read the data create 
+#read all the data:
+
+m1 = Read10X("data/raw/temp/exp3/m1/MN1")
+m2 = Read10X("data/raw/temp/exp3/m2/MN2")
+m3 = Read10X("data/raw/temp/exp3/m3/MN3")
+m4 = Read10X("data/raw/temp/exp3/m4/MN4")
+m5 = Read10X("data/raw/temp/exp3/m5/MN5")
+m6 = Read10X("data/raw/temp/exp3/m6/MN6")
+m7 = Read10X("data/raw/temp/exp3/m7/MN7")
+m8 = Read10X("data/raw/temp/exp3/m8/MN8")
+m9 = Read10X("data/raw//temp/exp3/m9/MN9")
+
+
+```
+
+
+
+##2.seurat obj
+```{r}
+
+# ── 2. Collect into a list ────────────────────────────────────────────────────
+data_list <- list(m1, m2, m3, m4, m5, m6, m7, m8, m9)
+
+# ── 3. Processing function ────────────────────────────────────────────────────
+process_matrix <- function(mat, sample_name, expected_cells = 5000) {
+  
+  # Handle multimodal data (e.g., GEX + ADT); keep Gene Expression only
+  if (is.list(mat)) mat <- mat[["Gene Expression"]]
+  
+  # Identify real cells using defaultDrops
+  em   <- defaultDrops(mat, expected = expected_cells)
+  keep <- which(em)
+  
+  # Safety check
+  if (length(keep) == 0)
+    stop(paste("No cells retained for sample:", sample_name))
+  
+  # Subset to real cells
+  mat_filtered <- mat[, keep, drop = FALSE]
+  
+  # Create Seurat object
+  Obj <- CreateSeuratObject(
+    counts       = mat_filtered,
+    project      = "Lymph Node",
+    min.cells    = 3,    # keep genes detected in ≥3 cells
+    min.features = 200   # keep cells with ≥200 detected genes
+  )
+  
+  # Track sample origin
+  Obj$sample <- sample_name
+  
+  return(Obj)
+}
+
+# ── 4. Process all samples ────────────────────────────────────────────────────
+obj_list <- lapply(
+  seq_along(data_list),
+  function(i) process_matrix(data_list[[i]],
+                              sample_name    = paste0("Obj", i),
+                              expected_cells = 5000)
+)
+names(obj_list) <- paste0("Obj", seq_along(obj_list))
+
+# ── 5. Merge all Seurat objects ───────────────────────────────────────────────
+Obj <- merge(
+  x            = obj_list[[1]],
+  y            = obj_list[2:length(obj_list)],
+  add.cell.ids = paste0("obj", seq_along(obj_list)),
+  project      = "Lymph Node"
+)
+
+
+```
+
+
+
+##3 qc
+```{r}
+##quality control:QC
+Obj=PercentageFeatureSet(Obj, col.name = "percent.mt",assay = "RNA", pattern = "^MT-")
+VlnPlot(Obj,features = c("nCount_RNA","nfeature_RNA","percent.mt" ), ncol=3, log= TRUE)
+
+```
+
+
+##4 normalize
+```{r}
+#Normalize,fvf,pca,scale
+Obj=NormalizeData(Obj, verbose = FALSE)
+Obj=FindVariableFeatures(Obj)
+Obj=ScaleData(Obj, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = Obj))
+Obj=RunPCA(Obj,features = VariableFeatures(object = Obj))
+ElbowPlot(Obj,ndims = 50, reduction = "pca")
+
+
+
+```
+
+
+
+##5integration
+```{r}
+
+
+##integration
+library(harmony)
+Obj =RunHarmony(Obj,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
+Obj[["RNA"]]=JoinLayers(Obj[["RNA"]])
+Obj = RunUMAP(Obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+DimPlot(Obj,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
+
+
+#for the resolution
+Obj=FindNeighbors(Obj,dims = 1:30)
+for (res in seq(0.2, 1, by = 0.1)) {
+  Obj <- FindClusters(Obj, resolution = res)
+  colname <- paste0("res_", res)
+  Obj[[colname]] <- Obj$seurat_clusters
+}
+res_cols <- grep("^res_", colnames(Obj@meta.data), value = TRUE)
+for (res in res_cols) {
+  p <- DimPlot(Obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
+       ggtitle(paste("Resolution:", res))
+  print(p)
+  readline(prompt="Press [Enter] to see the next resolution...")
+}
+
+#save 
+p_res04=DimPlot(Obj,group.by = "res_0.4",label = TRUE,reduction = "umap.harmony" ) + ggtitle("Resolution: 0.4")+
+  labs(x = "UMAP.h", 
+         y = "UMAP.h")
+ggsave(filename = "output/Lymph_node/LN/resolution.png",plot = p_res04,width = 12,height = 8,dpi = 300)
+
+
+
+```
+
+
+
+
+###5-clusters and find all markers
+```{r}
+###clusters
+
+Obj=FindNeighbors(Obj,reduction = "harmony",dims = 1:30)
+Obj=FindClusters(Obj, resolution = 0.4,cluster.name = "harmony_clusters")
+#markers
+Obj_markers=FindAllMarkers(Obj,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
+Obj_markers = Obj_markers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
+
+
+
+```
+
+
+
+###6. annotation
+```{r}
+
+
+library(dplyr)
+library(openxlsx)
+
+# Get all clusters
+clusters <- unique(Obj_markers$cluster)
+
+# List to store top 30 genes per cluster
+top_genes_list <- list()
+
+# Loop over clusters
+for(clust in clusters){
+  top_genes <- Obj_markers %>%
+    filter(cluster == clust) %>%
+    arrange(desc(avg_log2FC)) %>%   # sort by log fold-change
+    slice_head(n = 30) %>%          # take top 30
+    pull(gene)                      # get gene names
+  
+  top_genes_list[[paste0("cluster_", clust)]] <- top_genes
+}
+
+# Print top 30 per cluster
+for(clust in names(top_genes_list)){
+  cat("=== ", clust, " ===\n")
+  print(top_genes_list[[clust]])
+  cat("\n")
+}
+
+# Combine into a table for Excel
+top_genes_df <- data.frame(
+  matrix(
+    NA,
+    nrow = 30,
+    ncol = length(clusters),
+    dimnames = list(NULL, paste0("cluster_", clusters))
+  )
+)
+
+for(i in seq_along(clusters)){
+  clust <- clusters[i]
+  genes <- top_genes_list[[paste0("cluster_", clust)]]
+  top_genes_df[1:length(genes), i] <- genes
+}
+
+# Save to Excel
+write.xlsx(top_genes_df, "output/Lymph_data/top30_genes_per_cluster.xlsx")
+
+
+```
+
+
+```{r}
+
+
+FeaturePlot(Obj, features = c("CD4", "CD8A", "CD8B","CD3D" ,"GZMK","COTL1", "CCR7", "LEF1"), combine = F, order = T, reduction = "umap.harmony")
+
+Idents(Obj) = Obj$harmony_clusters
+ObJ = FindSubCluster(Obj, cluster = c(7), resolution = 0.1, graph.name = "RNA_snn")
+P=DimPlot(ObJ, group.by = "sub.cluster", reduction = "umap.harmony", label = T,label.size = 2)+
+  labs(x = "UMAP.h", 
+         y = "UMAP.h")
+P
+ggsave(filename = "output/SScILD/Low/SSL_sub.cluster.png", plot = P, width = 12, height = 8)
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+## 1. Get cluster identities as characters
+clusters <- as.character(Idents(Obj))
+
+## 2. Define mapping from cluster number → cell type
+cluster_colors <- c(
+  "0"  = "Stromal",
+  "1"  = "B cells",
+  "2"  = "BEC",
+  "3"  = "LEC",
+  "4"  = "BEC",
+  "5"  = "Stromal",
+  "6"  = "B cells",
+  "7"  = "Cytotoxic T cells",
+  "8"  = "Dendritic cells",
+  "9"  = "LEC",
+  "10" = "BEC",
+  "11" = "Stromal",
+  "12" =  "Dendritic cells",
+  "13" = "LEC",
+  "14" = "LEC",
+  "15" = "Stromal",
+  "16" = "Stromal",
+  "17" = "Stromal",
+  "18" = "Stromal"
+)
+
+## 3. Map cluster numbers to cell types
+celltype <- cluster_colors[clusters]
+
+## 4. Assign names to match cell barcodes
+names(celltype) <- colnames(Obj)
+
+## 5. Add cell_type metadata
+Obj$celltype <- celltype
+
+## 6. Make sure identities are still cluster numbers (0–11)
+Idents(Obj) <- "harmony_"
+
+
+
+## 7. Plot UMAP
+p <- DimPlot(
+  Obj,
+  reduction = "umap.harmony",
+  group.by = "celltype",   # legend uses cell type names
+  label = F,             # numbers (0–11) appear on the UMAP
+  label.size = 4
+) +
+  scale_color_brewer(type = "qual", palette = "Set3")+
+  theme(
+    legend.position = "top",                        # legend on top
+    legend.box.margin = margin(0, 0, 0, 0),
+    plot.margin = margin(10, 10, 10, 10),
+    legend.spacing.x = unit(2, "cm"),
+    legend.text = element_text(size = 10, color="black"),
+    legend.title = element_text(size = 8)
+  )
+p
+ggsave(filename = "output/Lymph_data/celltype.png", plot=p, width = 12, height = 8)
+
+```
+
+
+
+
+
+```{r}
+#-------check with know markers
+genes= c("PECAM1","VWF","EMCN","PROX1","PDPN","LYVE1","DCN","COL1A1","CCL19","MS4A1","CXCR5","CD3E","GZMB", "TRAC", "CD8A", "CD4","PTPRC","CD79A","CD80","ITGAX")
+p=DotPlot(
+  Obj,
+  features = genes,
+  cols = c("lightgrey", "blue"),
+  col.min = -2.5,
+  col.max = 2.5,
+  dot.min = 0,
+  dot.scale = 6,
+  split.by = NULL,
+  scale = TRUE,
+  scale.by = "radius",
+  scale.min = NA,
+  scale.max = NA,
+  cluster.idents = T, 
+  group.by = "celltype") + RotatedAxis() 
+p
+
+
+```
+
+
+##7. create subset
+```{r}
+##
+Idents(Obj) <- Obj$harmony_clusters
+bec <- subset(Obj, idents = c(2, 4, 10))
+lec <- subset(Obj, idents = c(3, 9, 13,14))
+stromal <- subset(Obj, idents = c(0, 5, 11, 15,16,17,18))
+immune <-subset(Obj, idents = c(1, 6, 7,8,12))
+
+
+#save
+saveRDS(bec, file = "data/process/temp/bec_subset.rds")
+saveRDS(lec, file = "data/process/temp/lec_subset.rds")
+saveRDS(stromal, file = "data/process/temp/stromal_subset.rds")
+saveRDS(immune, file = "data/process/temp/immune_subset.rds")
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+##save
+saveRDS(Obj, file="data/process/temp/LN_process.rds")
+
+#load it
+Obj = readRDS("data/process/temp/LN_process.rds")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

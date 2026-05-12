@@ -1,0 +1,334 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+
+
+
+
+
+######ANALYSIS OF AUTOIMMUNE DISEASES DATA WITH LYMP NODE DATA:FUSION ###########
+
+#packages
+```{r setup, include=FALSE}
+##################PACKAGES
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+#library(DropletUtils)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/aminatasouleymanesow/Desktop/LAB_DOCS")
+```
+
+
+
+
+
+
+##1 load the data
+```{r}
+#-------load____the 3_populations_-------------- 
+
+LEC= readRDS("data/process/temp/lec_obj.RDS")
+BEC= readRDS("data/process/temp/bec_obj.RDS")
+Stromal= readRDS("data/process/temp/stromal_obj.RDS")
+immune=readRDS(("data/process/temp/immune_subset.rds"))
+#merge lymph data
+LN <- merge(
+  x = LEC,
+  y = list(BEC, Stromal, immune)
+)
+  LN$orig.ident <-"Lymph Node"
+  keep
+cols_to_keep <- c("orig.ident","nCount_RNA","nFeature_RNA",   "sample", "percent.mt", "harmony_clusters", "celltype")
+
+# Subset the metadata
+LN@meta.data <- LN@meta.data[, cols_to_keep]
+ 
+saveRDS(LN,file ="data/process/temp/Ln_merged.rds" )
+
+
+mem.maxVSize(30000)
+Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
+names(Fu@assays) #the Fu has SCT and RNA
+DefaultAssay(Fu) = "RNA"
+Fu = DietSeurat(Fu, assays = "RNA") #delete the SCT assay
+rm(immune,BEC,LEC,Stromal)
+gc()
+```
+
+
+
+##2 fusion
+```{r}
+#------fusion
+
+Obj = merge(
+  x = Fu,
+  y = LN,
+  add.cell.ids = c("AuDisease", "Lymph node")
+)
+Obj
+#save
+saveRDS(Obj, file = "data/process/SeuratObjects/Fusion/Au_LN_raw.rds")
+#Obj=readRDS("data/process/temp/Au_LN_raw.rds")
+
+View(Fu@meta.data)
+```
+
+
+##2 statistics
+```{r}
+#-------
+#Normalize,fvf,pca,scale
+Obj=NormalizeData(Obj)
+Obj=FindVariableFeatures(Obj)
+Obj=ScaleData(Obj, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = Obj))
+Obj=RunPCA(Obj,features = VariableFeatures(object = Obj))
+ElbowPlot(Obj, ndims = 50, reduction = "pca")
+Obj=RunUMAP(Obj,dims = 1:30)
+p=DimPlot(Obj, reduction = "umap",label = TRUE,raster = FALSE)
+
+```
+
+##3 integration
+```{r}
+#------integration
+
+library(harmony)
+Obj =RunHarmony(Obj,group.by.vars = "orig.ident",orig.reduction = "pca",dims.use = 1:30  )
+Obj[["RNA"]]=JoinLayers(Obj[["RNA"]])
+Obj = RunUMAP(Obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+View(Obj@meta.data)
+
+```
+
+
+
+##4Plot with the disease
+```{r}
+#View(Obj@meta.data)
+#----------
+# Convert to factor without a name
+Obj$orig.ident <- factor(Obj$orig.ident)
+names(attributes(Obj$orig.ident)$levels) <- NULL   # removes the legend title
+
+# Set Idents
+Idents(Obj) <- "orig.ident"
+
+# Define colors
+disease_colors <- c(
+  "MS"               = "orange",
+  "RA"               = "darkred",
+  "SS"               = "yellow",
+  "IPF.U"            = "blue",
+  "IPF.L"            = "blue",
+  "T1D"              = "palevioletred2",
+  "SScILD.U"         = "tomato1",
+  "SScILD.L"         = "tomato1",
+  "SjD"              = "magenta",
+  "Lymph Node"       = "green"
+         )
+
+# UMAP plot
+P <- DimPlot(
+  Obj,
+  reduction = "umap.harmony",
+  group.by = "orig.ident",
+  label = FALSE,
+  cols = disease_colors,
+  raster = TRUE
+) +
+  theme(
+    aspect.ratio = 1,
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  labs(title = NULL) # Removes the default title
+
+P
+ggsave(filename = "output/Fusion/Au_LN.png", plot = P, height = 8, width = 12)
+
+```
+
+
+##5 look for shared celltype
+
+```{r}
+#-----
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+#----------------------------
+# 1. Count how many diseases per cell type
+#----------------------------
+# Create a table of celltype x disease
+tab <- table(Obj@meta.data$celltype, Obj@meta.data$orig.ident)
+
+# Number of diseases per celltype
+n_diseases <- rowSums(tab > 0)
+
+# Build result table
+celltype_disease_table <- data.frame(
+  celltype = rownames(tab),
+  n_diseases = n_diseases,
+  diseases = apply(tab > 0, 1, function(x) {
+    paste(colnames(tab)[x], collapse = ", ")
+  }),
+  row.names = NULL
+)
+
+#----------------------------
+# 2. Extract ONLY shared cell types (>=2 diseases)
+#----------------------------
+shared_celltypes <- celltype_disease_table$celltype[
+  celltype_disease_table$n_diseases >= 2
+]
+
+# Optional: view shared table
+shared_celltype_table <- celltype_disease_table[
+  celltype_disease_table$n_diseases >= 2, 
+]
+
+# Save the table including disease names
+write.csv(
+  shared_celltype_table,
+  file = "output/Fusion/Au_LN_shared_celltype.csv",
+  row.names = FALSE
+)
+
+#----------------------------
+# 3. Count cells per shared cell type per disease
+# Keep only counts >=2 (normal cells)
+#----------------------------
+count_tbl_shared <- Obj@meta.data %>%
+  filter(celltype %in% shared_celltypes) %>%   # only shared
+  dplyr::count(celltype, orig.ident) %>%      # count number of cells
+  filter(n >= 2)                              # only keep counts >= 2
+
+#----------------------------
+# 4. Convert to matrix for heatmap
+#----------------------------
+count_mat_shared <- count_tbl_shared %>%
+  pivot_wider(
+    names_from = orig.ident,
+    values_from = n,
+    values_fill = 0   # fill missing disease combinations with 0
+  )
+
+# Set rownames = celltype
+count_mat_shared <- as.data.frame(count_mat_shared)
+rownames(count_mat_shared) <- count_mat_shared$celltype
+count_mat_shared$celltype <- NULL
+count_mat_shared <- as.matrix(count_mat_shared)
+
+# Optional: scale by column (per disease)
+scaled_mat <- scale(count_mat_shared)
+
+#3plot
+pheatmap(
+  scaled_mat,
+  cluster_rows = FALSE,       # keep cell types in original order
+  cluster_cols = TRUE,        # cluster diseases if desired
+  display_numbers = count_mat_shared,  # raw counts
+  number_color = "white",
+  fontsize_row = 12,
+  fontsize_col = 10,
+  fontsize_number = 10,
+  color = colorRampPalette(c("grey", "red", "red3"))(100),
+  border_color = NA,
+  filename = "output/Fusion/Au_LN_shared_celltype.png",
+  width = 10,
+  height = 12
+  
+)
+
+
+```
+
+
+
+
+##6 correlation
+```{r}
+#------
+Idents(Obj) <- "orig.ident"
+
+# 2️⃣ Average expression per cell type
+av.expSS <- AverageExpression(
+  Obj,
+  assays = "RNA",
+  slot = "data"
+)$RNA
+# rows = genes, columns = cell types
+
+# 3️⃣ Cell-type correlation matrix
+correlation_matrixSS <- cor(
+  as.matrix(av.expSS),
+  use = "pairwise.complete.obs"
+)
+
+# safety cleanup
+correlation_matrixSS[is.na(correlation_matrixSS)]=0
+
+mcol <- colorRampPalette(c("white", "darkblue", "red"))(100)
+library(pheatmap)
+pheatmap(
+  correlation_matrixSS,
+  clustering_method = "ward.D2",
+  color = mcol,
+  border_color = NA,
+  fontsize_row = 10,
+  fontsize_col = 10,
+  display_numbers = FALSE,
+  filename = "output/Fusion/Au_LN_correlation.png", 
+  width = 10,   # in inches
+  height = 12
+)
+
+
+```
+
+
+
+
+
+
+
+```{r}
+#--------save
+saveRDS(Obj, file = "data/process/SeuratObjects/Fusion/Au_LN_process.rds")
+#load-----later
+#Obj=readRDS("data/process/SeuratObjects/Lymph_data/Au_LN_process.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
