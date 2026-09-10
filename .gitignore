@@ -1,6 +1,8 @@
 # Ignorer les dossiers de données et résultats
 data/
 output/
+CCC/
+
 # Ignorer les fichiers RStudio temporaires
 .Rproj.user
 .Rhistory
@@ -10,4 +12,6 @@ output/
 
 # Fichiers générés par RMarkdown
 *.html
+*.nb.html
+
 *.nb.html
