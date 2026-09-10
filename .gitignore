@@ -5,6 +5,7 @@ CCC/
 data/
 output/
 CCC/*/output/
+GRN_SCENIC/
 *.rds
 *.RDS
 *.nb.html
@@ -28,4 +29,11 @@ CCC/*/output/
 *.rds
 *.RDS
 .Rproj.user/
-GRN_SCENIC/
+
+LAB_DOCS/
+LAB_DOCS.git.bak/
+DNA_methylation_workshop/
+loom.Rmd
+omnipathr-log/
+.RDataTmp
+.RDataTmp1
