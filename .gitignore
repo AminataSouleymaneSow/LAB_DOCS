@@ -2,7 +2,13 @@
 data/
 output/
 CCC/
-
+data/
+output/
+CCC/*/output/
+*.rds
+*.RDS
+*.nb.html
+.Rproj.user/
 # Ignorer les fichiers RStudio temporaires
 .Rproj.user
 .Rhistory
@@ -16,3 +22,10 @@ CCC/
 
 *.nb.html
 *.nb.html
+data/
+output/
+CCC/*/output/
+*.rds
+*.RDS
+.Rproj.user/
+GRN_SCENIC/
