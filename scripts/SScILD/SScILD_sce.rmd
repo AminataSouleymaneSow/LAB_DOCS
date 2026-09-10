@@ -1,0 +1,1156 @@
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+#########CELLE CELL COMMUNICATION FOR SScILD in Upper and Lower lung #################################### ######################################################################
+
+---------------------------------------------------------------------------------------------------------------------
+
+##1load packages
+
+```{r setup, include=FALSE}
+
+##################PACKAGES
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+```
+
+
+
+
+
+```{r}
+
+use_gpu <- TRUE
+library(reticulate, quietly = TRUE)
+#reticulate::use_condaenv("lianaenv", required = TRUE) #use this one or the whole path
+reticulate::use_condaenv( "lianaenv", conda = "/mnt/nfs/home/aminata.sow/miniforge3/bin/conda", required = TRUE )
+
+```
+
+
+```{r}
+
+suppressMessages({
+    library(dplyr, quietly = TRUE)
+    library(tidyr, quietly = TRUE)
+    library(purrr, quietly = TRUE)
+    library(forcats, quietly = TRUE)
+    library(textshape, quietly = TRUE)
+    library(ggpubr, quietly = TRUE)
+    library(rstatix, quietly = TRUE)
+    library(reshape2, quietly = TRUE)
+    library(tibble, quietly = TRUE)
+
+    library(scater, quietly = TRUE)
+    library(scuttle, quietly = TRUE)
+
+    library(ggplot2, quietly = TRUE)
+
+    library(liana, quietly = TRUE)
+    library(decoupleR, quietly = TRUE)
+     library("ExperimentHub")
+   c2c <- reticulate::import(module = "cell2cell")
+})
+
+##load the seurat obj and put it in SingleCellExperiment format
+SS.U  = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+sce <- as.SingleCellExperiment(SS.U)
+saveRDS(sce,file = "data/process/SeuratObjects/SScILD/Upper/sce_raw.rds")
+
+```
+
+
+
+
+##2 QC
+```{r}
+
+#SSU.sce=readRDS("CCC/SScILD/Upper/code/sce_raw.rds")
+#check the threshold before
+colData(sce)
+hist(
+  colSums(counts(sce) > 0),
+  breaks = 100,
+  main = "Detected genes per cell",
+  xlab = "Number of genes"
+)
+
+# basic filters
+sce <- scater::addPerCellQC(sce)
+min.features <- 500
+min.cells <- 5
+
+qc <- scater::perCellQCMetrics(sce)
+sce <- sce[rowSums(counts(sce) >= 1) >= min.cells, ]
+sce <- sce[, colSums(counts(sce) >= 1) >= min.features]
+
+
+#mt
+is.mito <- grep("MT-", rownames(sce))
+per.cell <- scuttle::perCellQCMetrics(sce, subsets=list(Mito=is.mito))
+colData(sce)[['subsets_Mito_percent']] <- per.cell$subsets_Mito_percent
+
+class(colData(sce)$subsets_Mito_percent)
+hist(
+  colData(sce)$subsets_Mito_percent,
+  breaks = 100,
+  main = "Mitochondrial percentage per cell",
+  xlab = "Percent mitochondrial reads"
+)
+sce <-sce[, colData(sce)$subsets_Mito_percent < 15]
+
+```
+
+
+##3Normalization
+```{r}
+#----------------------------
+scale.factor <- 1e4
+lib.sizes <- colSums(counts(sce)) / scale.factor
+assay(sce, 'logcounts') <- scuttle::normalizeCounts(sce, size.factors=lib.sizes, log=FALSE, center.size.factors=FALSE)
+assay(sce, 'logcounts') <- log1p(assay(sce, 'logcounts'))
+
+```
+
+##4 cell cell comm
+```{r}
+#-----run liliana
+liana_res <- liana_bysample( sce = sce,
+                      sample_col = "sample", # context dimension column from SCE metadata
+                      idents_col = "CellType", # cell types column from SCE metadata
+                      resource = 'Consensus',
+                      expr_prop = 0.1, # must be expressed in expr_prop fraction of cells
+                      min_cells = 5,
+                      assay.type = 'logcounts', # run on log- and library-normalized counts
+                      aggregate_how = 'both', # aggregate magnitude and specificity
+                      verbose = TRUE,
+                      inplace = FALSE, #save it out of the sce obj
+                      permutation.params=list(nperms=100),
+                      return_all=TRUE
+                      )
+#we convert to data frame 
+library(dplyr)
+names(liana_res) <- unique(colData(sce)$sample) #all sample name 
+
+liana_res <-bind_rows(liana_res, .id = "sample")
+liana_res$sample <- as.character(liana_res$sample)
+table(liana_res$sample)
+ write.csv(liana_res, file = "CCC/SScILD/Upper/output/liana_res.csv", row.names = FALSE) 
+ 
+# Filter strong interactions
+
+liana_filt <- liana_res %>%
+  filter(magnitude_rank <= 0.05,
+         cellphonedb.pvalue <= 0.01)
+  table(liana_filt$sample)   
+  write.csv(liana_filt, file = "CCC/SScILD/Upper/output/liana_filt.csv", row.names = FALSE)
+  
+  #read
+  liana_filt <- read.csv("CCC/SScILD/Upper/output/liana_filt.csv")
+  liana_res <- read.csv("CCC/SScILD/Upper/output/liana_res.csv")
+  
+  
+```
+
+
+
+##5topsender and receivers
+```{r}
+#1 sender and receivers
+sender_df <- liana_filt %>%
+  dplyr::count(source, name = "source_count") %>% 
+  dplyr::rename(celltype_clust = source) 
+
+receiver_df <- liana_filt %>% 
+  dplyr::count(target, name = "target_count") %>%
+  dplyr::rename(celltype_clust = target) 
+
+activity_df <- full_join(sender_df, receiver_df,
+              by = "celltype_clust") %>%
+              replace_na(list(source_count = 0,
+                target_count = 0))   
+```
+
+
+```{r}
+
+#2 compute total_count
+activity_df <- activity_df %>%
+  mutate(
+    total_count = source_count + target_count,
+    sender_rank = rank(-source_count, ties.method = "min"),
+    receiver_rank = rank(-target_count, ties.method = "min")
+  ) %>%
+  arrange(desc(total_count))
+
+write.csv(activity_df,file = "CCC/SScILD/Upper/output/Top_sender_receivers.csv",row.names = FALSE)
+
+```
+
+
+```{r}
+
+#3 rank
+activity_df <- activity_df %>%
+  arrange(desc(total_count))
+
+activity_df$celltype_clust <- factor(activity_df$celltype_clust,
+                                     levels = rev(unique(activity_df$celltype_clust)))
+#plot
+
+#4 plot
+plot_df <- activity_df %>%
+  select(celltype_clust, source_count, target_count, total_count) %>%
+  pivot_longer(cols = c(source_count, target_count),
+               names_to = "role",
+               values_to = "count") %>%
+  mutate(role = recode(role,
+                       source_count = "source",
+                       target_count = "target"),
+         role = factor(role, levels = c("source", "target")))
+
+
+ p <- ggplot(plot_df,
+            aes(x = count, y = celltype_clust, fill = role)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.65) +
+  scale_fill_manual(name = NULL,
+                    values = c("source" = "#2166AC", "target" = "#D6604D"),
+                    labels = c("Sender", "Receiver")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Number of interactions",
+       y = NULL
+       ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = c(0.85, 0.15),
+    legend.background = element_rect(fill = "white", color = "grey80"),
+    legend.text = element_text(size = 12),
+    panel.border = element_rect(fill = NA, linewidth = 0.8),
+    axis.line = element_blank(),
+    axis.text.y = element_text(size = 11, color = "black"),
+    axis.text.x = element_text(size = 11, color = "black"),
+    axis.title.x = element_text(size = 13, margin = margin(t = 8)),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+    plot.margin = margin(10, 20, 10, 10)
+  )   
+
+ggsave(filename = "CCC/SScILD/Upper/output/TopSR.pdf", plot = p, width = 10, height = 8)
+
+```
+
+
+
+
+##6Unique and shared ligand-Receptor
+```{r}
+
+#1 unique LR
+unique_lr <- liana_filt %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_")) %>%
+  group_by(LR_pair) %>%
+  filter(n() == 1) %>%
+  ungroup() %>%
+  select(source, target, ligand.complex, receptor.complex, LR_pair,
+         magnitude_rank, cellphonedb.pvalue, specificity_rank, magnitude_mean_rank) %>%
+  arrange(magnitude_rank)
+
+write.csv(unique_lr, file="CCC/SScILD/Upper/output/Unique_lr.csv",row.names = TRUE)
+
+#2 shared LR
+shared_lr <- liana_filt %>%
+  dplyr::mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_")) %>%
+  dplyr::group_by(LR_pair) %>%
+  dplyr::mutate(n_repetitions = dplyr::n()) %>%
+  dplyr::filter(n_repetitions > 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(source, target, ligand.complex, receptor.complex, LR_pair,
+                n_repetitions, magnitude_rank, cellphonedb.pvalue,
+                specificity_rank, magnitude_mean_rank)
+           
+write.csv(shared_lr, file="CCC/SScILD/Upper/output/shared_lr.csv",row.names = TRUE)
+
+
+
+```
+
+
+```{r}
+
+ #---plot-shared---
+#---plot-shared---
+library(dplyr)
+library(ggplot2)
+
+# 1. Create LR pair
+shared_lr <- shared_lr %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_"))
+
+# 2. Filter by source cell
+source_cell <- "Fibroblasts_9"
+shared_source <- shared_lr %>%
+  filter(source == source_cell)
+
+# 3. Keep shared interactions (multiple targets)
+shared_source_clean <- shared_source %>%
+  group_by(LR_pair) %>%
+  filter(n_distinct(target) >= 3) %>%
+  ungroup()
+
+# 4. Select TOP LR pairs
+top_lr_pairs <- shared_source_clean %>%
+  dplyr::group_by(LR_pair) %>%
+  dplyr::summarise(mean_rank = mean(magnitude_mean_rank, na.rm = TRUE)) %>%
+  dplyr::arrange(mean_rank) %>%
+  dplyr::slice_head(n = 30) %>%
+  dplyr::pull(LR_pair)
+
+# 5. Keep ALL rows for these LR pairs
+shared_source_top <- shared_source_clean %>%
+  filter(LR_pair %in% top_lr_pairs)
+
+# 6. Plot
+p <- ggplot(shared_source_top,
+            aes(x = LR_pair, y = target)) +
+  geom_point(aes(size = -magnitude_mean_rank,
+                 color = -magnitude_mean_rank)) +
+  scale_color_viridis_c(name = "Interaction\nstrength",
+                        option = "plasma",
+                        guide = guide_colorbar(
+                          barwidth = 1,
+                          barheight = 8,
+                          ticks = TRUE,
+                          ticks.colour = "white",
+                          frame.colour = "grey50"
+                        )) +
+  scale_size_continuous(name = "Interaction\nstrength",
+                        range = c(1, 6),
+                        guide = "none") +
+  theme_bw(base_size = 13) +
+  labs(
+    title = paste(source_cell, "as Sender"),
+    x = "Ligand-Receptor Pairs",
+    y = "Receivers"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1,
+                                size = 20, color = "black"),
+    axis.text.y = element_text(size = 20, color = "black"),
+    axis.title.x = element_text(size = 20, margin = margin(t = 8)),
+    axis.title.y = element_text(size = 20, margin = margin(r = 8)),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(size = 20),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+
+
+ ggsave(filename = "CCC/SScILD/Upper/output/shared_lr.pdf", plot = p, width = 30, height = 25, dpi = 300) 
+ 
+```
+
+
+```{r}
+
+#---plot-unique---
+library(dplyr)
+library(ggplot2)
+
+# 1. Create LR pair
+unique_lr <- unique_lr %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_"))
+
+# 2. Select TOP LR pairs
+top_lr_pairs <- unique_lr %>%
+  group_by(LR_pair) %>%
+  summarise(mean_rank = mean(magnitude_mean_rank, na.rm = TRUE)) %>%
+  arrange(mean_rank) %>%
+  slice_head(n = 50) %>%
+  pull(LR_pair)
+
+# 3. Filter and order
+top_unique <- unique_lr %>%
+  filter(LR_pair %in% top_lr_pairs) %>%
+  mutate(LR_pair = factor(LR_pair, levels = rev(unique(LR_pair))))
+
+ 
+    # 4. Plot
+p <- ggplot(top_unique,
+            aes(x = LR_pair, y = target)) +
+  geom_point(aes(size = -magnitude_mean_rank,
+                 color = -magnitude_mean_rank)) +
+  scale_color_viridis_c(name = "Interaction\nstrength",
+                        option = "plasma",
+                        guide = guide_colorbar(
+                          barwidth = 1,
+                          barheight = 8,
+                          ticks = TRUE,
+                          ticks.colour = "white",
+                          frame.colour = "grey50"
+                        )) +
+  scale_size_continuous(name = "Interaction\nstrength",
+                        range = c(1, 6),
+                        guide = "none") +
+  facet_wrap(~ source, scales = "free_y", ncol = 2) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "Unique Ligand-Receptor Pairs",
+    x = "Ligand-Receptor Pairs",
+    y = "Receiver Cell Types"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1,
+                            size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.title.x = element_text(size = 17, margin = margin(t = 8)),
+    axis.title.y = element_text(size = 17, margin = margin(r = 8)),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey95"),
+    strip.text = element_text(size = 15, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 13),
+    plot.margin = margin(10, 15, 10, 10)
+    
+  )
+
+ ggsave(filename = "CCC/SScILD/Upper/output/unique_lr.pdf", plot = p, width = 40, height = 24,dpi = 300)
+ 
+ 
+```
+
+
+
+##7Pathway
+```{r}
+
+#-----Pathway enrichment using gprofiler2-----
+library(gprofiler2)
+library(dplyr)
+
+# 1. Extract ligand and receptor genes from liana_filt (query)
+ligands_strong <- liana_filt$ligand.complex
+ligands_strong <- ligands_strong[!is.na(ligands_strong)]
+receptors_strong <- liana_filt$receptor.complex
+receptors_strong <- receptors_strong[!is.na(receptors_strong)]
+query_genes <- unique(c(ligands_strong, receptors_strong))
+length(query_genes)
+
+# 2. Extract ligand and receptor genes from liana_res (background)
+ligands_all <- liana_res$ligand.complex
+ligands_all <- ligands_all[!is.na(ligands_all)]
+receptors_all <- liana_res$receptor.complex
+receptors_all <- receptors_all[!is.na(receptors_all)]
+background_genes <- unique(c(ligands_all, receptors_all))
+length(background_genes)
+
+# 3. Perform ORA using g:Profiler
+gprof_enr <- gost(
+  query = query_genes,
+  ordered_query = FALSE,
+  custom_bg = background_genes,
+  organism = "hsapiens"
+)
+
+# 4. Clean results
+gprof_results_clean <- gprof_enr$result
+nrow(gprof_results_clean)
+gprof_results_clean$parents <- NULL
+gprof_results_clean <- gprof_results_clean[order(gprof_results_clean$p_value), ]
+
+# Save all results
+write.csv(gprof_results_clean, "CCC/SScILD/Upper/output/Pathways.csv", row.names = FALSE)
+
+# 5. Filter for GO:BP and Reactome
+gprof_GO <- gprof_results_clean %>%
+  filter(source %in% c("GO:BP", "REAC")) %>%
+  filter(term_size < 500) %>%
+  filter(intersection_size >= 3) %>%
+  arrange(p_value)
+
+write.csv(gprof_GO, "CCC/SScILD/Upper/output/PathwaysGO.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+#-----Plot pathway enrichment-----
+library(ggplot2)
+library(dplyr)
+
+# 1. Select top pathways
+top_pathways <- gprof_GO %>%
+  group_by(source) %>%
+  slice_head(n = 20) %>%
+  ungroup() %>%
+  mutate(
+    term_name = factor(term_name,
+                       levels = rev(unique(term_name))),
+    log10p = -log10(p_value)
+  )
+
+# 2. Plot
+p <- ggplot(top_pathways,
+            aes(x = log10p,
+                y = term_name,
+                fill = source)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_vline(xintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey40",
+             linewidth = 0.5) +
+  scale_fill_manual(name = "Database",
+                    values = c("GO:BP" = "#2166AC",
+                               "REAC"  = "#D6604D")) +
+  facet_wrap(~ source, scales = "free_y", ncol = 1) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "Pathway Enrichment",
+    x = "-log10(p-value)",
+    y = NULL
+  ) +
+  theme(
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 11, color = "black"),
+    axis.title.x = element_text(size = 12, margin = margin(t = 8)),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none",
+    strip.background = element_rect(fill = "grey95"),
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+ggsave(filename = "CCC/SScILD/Upper/output/PathwaysGO.pdf", plot = p, width = 10, height = 14,dpi = 300)
+ ggsave(filename = "CCC/SScILD/Upper/output/PathwaysGO.png", plot = p, width = 10, height = 14,dpi = 300)
+
+
+
+```
+
+
+##7Gene-Regulatory-Networks
+```{r}
+##1run the pyscenic in the terminal, import the data
+##use this methode that divide the data in gene, barcodes and matrix to facilite the import in the terminal
+
+
+library(Matrix)
+expr <- assay(SSU.sce, "counts") 
+writeMM(expr, "GRN_SCENIC/SScILD/Upper/input/matrix.mtx")
+
+write.table(rownames(expr),
+            file = "GRN_SCENIC/SScILD/Upper/input/genes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+write.table(colnames(expr),
+            file = "GRN_SCENIC/SScILD/Upper/input/barcodes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+##all details in the words files:SCENIC_pipeline_wd and the.py and .sh files  for the code and information
+```
+
+
+```{r}
+#--save sce obj
+saveRDS(sce, file="data/process/SeuratObjects/SScILD/Upper/sce_processed.rds")
+#---read
+sce=readRDS("data/process/SeuratObjects/SScILD/Upper/sce_processed.rds")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#############################     for SScILD.Low     ##################################
+
+##1 load the obj
+```{r}
+
+##load the seurat obj and put it in SingleCellExperiment format
+SS.L  = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+sce <- as.SingleCellExperiment(SS.L)
+
+saveRDS(sce,file = "data/process/SeuratObjects/SScILD/Low/sce_raw.rds")
+
+
+
+```
+
+
+##2QC
+```{r}
+#check the threshold before
+
+
+#check the threshold before
+hist(
+  colSums(counts(sce) > 0),
+  breaks = 100,
+  main = "Detected genes per cell",
+  xlab = "Number of genes"
+)
+
+# basic filters
+sce <- scater::addPerCellQC(sce)
+min.features <- 500
+min.cells <- 5
+
+qc <- scater::perCellQCMetrics(sce)
+sce <- sce[rowSums(counts(sce) >= 1) >= min.cells, ]
+sce <- sce[, colSums(counts(sce) >= 1) >= min.features]
+
+
+#mt
+is.mito <- grep("MT-", rownames(sce))
+per.cell <- scuttle::perCellQCMetrics(sce, subsets=list(Mito=is.mito))
+colData(sce)[['subsets_Mito_percent']] <- per.cell$subsets_Mito_percent
+
+class(colData(sce)$subsets_Mito_percent)
+hist(
+  colData(sce)$subsets_Mito_percent,
+  breaks = 100,
+  main = "Mitochondrial percentage per cell",
+  xlab = "Percent mitochondrial reads"
+)
+sce <- sce[, colData(sce)$subsets_Mito_percent < 15]
+
+
+```
+
+
+##3Normalization
+```{r}
+#--------
+
+
+scale.factor <- 1e4
+lib.sizes <- colSums(counts(sce )) / scale.factor
+assay(sce , 'logcounts') <- scuttle::normalizeCounts(sce , size.factors=lib.sizes, log=FALSE, center.size.factors=FALSE)
+assay(sce , 'logcounts') <- log1p(assay(sce , 'logcounts'))
+head(colData(sce ))
+
+
+
+```
+
+
+
+```{r}
+#1 first step for everything 
+#-----run liliana
+liana_res <- liana_bysample( sce = sce ,
+                      sample_col = "sample", # context dimension column from SCE metadata
+                      idents_col = "CellType", # cell types column from SCE metadata
+                      resource = 'Consensus',
+                      expr_prop = 0.1, # must be expressed in expr_prop fraction of cells
+                      min_cells = 5,
+                      assay.type = 'logcounts', # run on log- and library-normalized counts
+                      aggregate_how = 'both', # aggregate magnitude and specificity
+                      verbose = TRUE,
+                      inplace = FALSE,
+                      permutation.params=list(nperms=100),
+                      return_all=TRUE
+                      )
+
+# Convert list to dataframe
+library(dplyr)
+names(liana_res) <- unique(colData(sce)$sample) #all sample name 
+
+liana_res <-bind_rows(liana_res, .id = "sample")
+liana_res$sample <- as.character(liana_res$sample)
+table(liana_res$sample)
+write.csv(liana_res, file = "CCC/SScILD/Low/output/liana_res.csv", row.names = FALSE)
+
+          
+# Filter strong interactions
+
+liana_filt <- liana_res %>%
+  filter(magnitude_rank <= 0.05,cellphonedb.pvalue <= 0.01)
+  table(liana_filt$sample)   
+  write.csv(liana_filt, file = "CCC/SScILD/Low/output/liana_filt.csv", row.names = FALSE)
+
+liana_filt=read.csv("CCC/SScILD/Low/output/liana_filt.csv")
+liana_res=read.csv("CCC/SScILD/Low/output/liana_res.csv")
+   
+```
+
+
+
+##4Top senders and receivers
+```{r}
+
+ #1 sender and receivers
+sender_df <- liana_filt %>%
+  dplyr::count(source, name = "source_count") %>% 
+  dplyr::rename(celltype_clust = source) 
+
+receiver_df <- liana_filt %>% 
+  dplyr::count(target, name = "target_count") %>%
+  dplyr::rename(celltype_clust = target) 
+
+activity_df <- full_join(sender_df, receiver_df,
+              by = "celltype_clust") %>%
+              replace_na(list(source_count = 0,
+                target_count = 0))          
+
+```
+
+
+
+```{r}
+
+#2 compute total_count
+activity_df <- activity_df %>%
+  mutate(
+    total_count = source_count + target_count,
+    sender_rank = rank(-source_count, ties.method = "min"),
+    receiver_rank = rank(-target_count, ties.method = "min")
+  ) %>%
+  arrange(desc(total_count))
+
+write.csv(activity_df,file = "CCC/SScILD/Low/output/Top_sender_receivers.csv",row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+
+#3 rank
+activity_df <- activity_df %>%
+  arrange(desc(total_count))
+
+activity_df$celltype_clust <- factor(activity_df$celltype_clust,
+                                     levels = rev(unique(activity_df$celltype_clust)))
+#plot
+
+#4 plot
+plot_df <- activity_df %>%
+  select(celltype_clust, source_count, target_count, total_count) %>%
+  pivot_longer(cols = c(source_count, target_count),
+               names_to = "role",
+               values_to = "count") %>%
+  mutate(role = recode(role,
+                       source_count = "source",
+                       target_count = "target"),
+         role = factor(role, levels = c("source", "target")))
+
+
+ p <- ggplot(plot_df,
+            aes(x = count, y = celltype_clust, fill = role)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.65) +
+  scale_fill_manual(name = NULL,
+                    values = c("source" = "#2166AC", "target" = "#D6604D"),
+                    labels = c("Sender", "Receiver")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Number of interactions",
+       y = NULL
+       ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = c(0.85, 0.15),
+    legend.background = element_rect(fill = "white", color = "grey80"),
+    legend.text = element_text(size = 12),
+    panel.border = element_rect(fill = NA, linewidth = 0.8),
+    axis.line = element_blank(),
+    axis.text.y = element_text(size = 11, color = "black"),
+    axis.text.x = element_text(size = 11, color = "black"),
+    axis.title.x = element_text(size = 13, margin = margin(t = 8)),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+    plot.margin = margin(10, 20, 10, 10)
+  )   
+
+ggsave(filename = "CCC/SScILD/Low/output/TopSR.pdf", plot = p, width = 10, height = 20)
+
+```
+
+
+##5Unique and shared ligand-Receptor
+
+```{r}
+
+
+#1 unique LR
+unique_lr <- liana_filt %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_")) %>%
+  group_by(LR_pair) %>%
+  filter(n() == 1) %>%
+  ungroup() %>%
+  select(source, target, ligand.complex, receptor.complex, LR_pair,
+         magnitude_rank, cellphonedb.pvalue, specificity_rank, magnitude_mean_rank) %>%
+  arrange(magnitude_rank)
+
+write.csv(unique_lr, file="CCC/SScILD/Low/output/Unique_lr.csv",row.names = TRUE)
+
+#2 shared LR
+shared_lr <- liana_filt %>%
+  dplyr::mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_")) %>%
+  dplyr::group_by(LR_pair) %>%
+  dplyr::mutate(n_repetitions = dplyr::n()) %>%
+  dplyr::filter(n_repetitions > 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(source, target, ligand.complex, receptor.complex, LR_pair,
+                n_repetitions, magnitude_rank, cellphonedb.pvalue,
+                specificity_rank, magnitude_mean_rank)
+           
+write.csv(shared_lr, file="CCC/SScILD/Low/output/shared_lr.csv",row.names = TRUE)
+
+
+```
+
+
+
+```{r}
+
+  #---plot-shared---
+#---plot-shared---
+library(dplyr)
+library(ggplot2)
+
+# 1. Create LR pair
+shared_lr <- shared_lr %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_"))
+
+# 2. Filter by source cell
+source_cell <- "Fibroblasts_11"
+shared_source <- shared_lr %>%
+  filter(source == source_cell)
+
+# 3. Keep shared interactions (multiple targets)
+shared_source_clean <- shared_source %>%
+  group_by(LR_pair) %>%
+  filter(n_distinct(target) >= 3) %>%
+  ungroup()
+
+# 4. Select TOP LR pairs
+top_lr_pairs <- shared_source_clean %>%
+  dplyr::group_by(LR_pair) %>%
+  dplyr::summarise(mean_rank = mean(magnitude_mean_rank, na.rm = TRUE)) %>%
+  dplyr::arrange(mean_rank) %>%
+  dplyr::slice_head(n = 30) %>%
+  dplyr::pull(LR_pair)
+
+# 5. Keep ALL rows for these LR pairs
+shared_source_top <- shared_source_clean %>%
+  filter(LR_pair %in% top_lr_pairs)
+
+# 6. Plot
+p <- ggplot(shared_source_top,
+            aes(x = LR_pair, y = target)) +
+  geom_point(aes(size = -magnitude_mean_rank,
+                 color = -magnitude_mean_rank)) +
+  scale_color_viridis_c(name = "Interaction\nstrength",
+                        option = "plasma",
+                        guide = guide_colorbar(
+                          barwidth = 1,
+                          barheight = 8,
+                          ticks = TRUE,
+                          ticks.colour = "white",
+                          frame.colour = "grey50"
+                        )) +
+  scale_size_continuous(name = "Interaction\nstrength",
+                        range = c(1, 6),
+                        guide = "none") +
+  theme_bw(base_size = 13) +
+  labs(
+    title = paste(source_cell, "as Sender"),
+    x = "Ligand-Receptor Pairs",
+    y = "Receivers"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1,
+                                size = 20, color = "black"),
+    axis.text.y = element_text(size = 20, color = "black"),
+    axis.title.x = element_text(size = 20, margin = margin(t = 8)),
+    axis.title.y = element_text(size = 20, margin = margin(r = 8)),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(size = 20),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+
+ggsave(filename = "CCC/SScILD/Low/output/shared_lr.pdf", plot = p,width = 30,height = 22,dpi = 300 )
+
+
+```
+
+
+
+```{r}
+#---plot-unique---
+library(dplyr)
+library(ggplot2)
+
+# 1. Create LR pair
+unique_lr <- unique_lr %>%
+  mutate(LR_pair = paste(ligand.complex, receptor.complex, sep = "_"))
+
+# 2. Select TOP LR pairs
+top_lr_pairs <- unique_lr %>%
+  group_by(LR_pair) %>%
+  summarise(mean_rank = mean(magnitude_mean_rank, na.rm = TRUE)) %>%
+  arrange(mean_rank) %>%
+  slice_head(n = 50) %>%
+  pull(LR_pair)
+
+# 3. Filter and order
+top_unique <- unique_lr %>%
+  filter(LR_pair %in% top_lr_pairs) %>%
+  mutate(LR_pair = factor(LR_pair, levels = rev(unique(LR_pair))))
+
+ 
+    # 4. Plot
+p <- ggplot(top_unique,
+            aes(x = LR_pair, y = target)) +
+  geom_point(aes(size = -magnitude_mean_rank,
+                 color = -magnitude_mean_rank)) +
+  scale_color_viridis_c(name = "Interaction\nstrength",
+                        option = "plasma",
+                        guide = guide_colorbar(
+                          barwidth = 1,
+                          barheight = 8,
+                          ticks = TRUE,
+                          ticks.colour = "white",
+                          frame.colour = "grey50"
+                        )) +
+  scale_size_continuous(name = "Interaction\nstrength",
+                        range = c(1, 6),
+                        guide = "none") +
+  facet_wrap(~ source, scales = "free_y", ncol = 2) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "Unique Ligand-Receptor Pairs",
+    x = "Ligand-Receptor Pairs",
+    y = "Receiver Cell Types"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1,
+                            size = 16, color = "black"),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.title.x = element_text(size = 17, margin = margin(t = 8)),
+    axis.title.y = element_text(size = 17, margin = margin(r = 8)),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey95"),
+    strip.text = element_text(size = 15, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 13),
+    plot.margin = margin(10, 15, 10, 10)
+    
+  )
+
+  
+ ggsave(filename = "CCC/SScILD/Low/output/unique_lr.png", plot = p, width = 40, height = 20,dpi = 300)
+ ggsave(filename = "CCC/SScILD/Low/output/unique_lr.pdf", plot = p, width = 40, height = 20,dpi = 300)
+ 
+```
+
+
+##6Pathway
+```{r}
+#-----Pathway enrichment using gprofiler2-----
+library(gprofiler2)
+library(dplyr)
+
+# 1. Extract ligand and receptor genes from liana_filt (query)
+ligands_strong <- liana_filt$ligand.complex
+ligands_strong <- ligands_strong[!is.na(ligands_strong)]
+receptors_strong <- liana_filt$receptor.complex
+receptors_strong <- receptors_strong[!is.na(receptors_strong)]
+query_genes <- unique(c(ligands_strong, receptors_strong))
+length(query_genes)
+
+# 2. Extract ligand and receptor genes from liana_res (background)
+ligands_all <- liana_res$ligand.complex
+ligands_all <- ligands_all[!is.na(ligands_all)]
+receptors_all <- liana_res$receptor.complex
+receptors_all <- receptors_all[!is.na(receptors_all)]
+background_genes <- unique(c(ligands_all, receptors_all))
+length(background_genes)
+
+# 3. Perform ORA using g:Profiler
+gprof_enr <- gost(
+  query = query_genes,
+  ordered_query = FALSE,
+  custom_bg = background_genes,
+  organism = "hsapiens"
+)
+
+# 4. Clean results
+gprof_results_clean <- gprof_enr$result
+nrow(gprof_results_clean)
+gprof_results_clean$parents <- NULL
+gprof_results_clean <- gprof_results_clean[order(gprof_results_clean$p_value), ]
+
+# Save all results
+write.csv(gprof_results_clean, "CCC/SScILD/Low/output/Pathways.csv", row.names = FALSE)
+
+# 5. Filter for GO:BP and Reactome
+gprof_GO <- gprof_results_clean %>%
+  filter(source %in% c("GO:BP", "REAC")) %>%
+  filter(term_size < 500) %>%
+  filter(intersection_size >= 3) %>%
+  arrange(p_value)
+
+write.csv(gprof_GO, "CCC/SScILD/Low/output/PathwaysGO.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+
+#-----Plot pathway enrichment-----
+library(ggplot2)
+library(dplyr)
+
+# 1. Select top pathways
+top_pathways <- gprof_GO %>%
+  group_by(source) %>%
+  slice_head(n = 20) %>%
+  ungroup() %>%
+  mutate(
+    term_name = factor(term_name,
+                       levels = rev(unique(term_name))),
+    log10p = -log10(p_value)
+  )
+
+# 2. Plot
+p <- ggplot(top_pathways,
+            aes(x = log10p,
+                y = term_name,
+                fill = source)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_vline(xintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey40",
+             linewidth = 0.5) +
+  scale_fill_manual(name = "Database",
+                    values = c("GO:BP" = "#2166AC",
+                               "REAC"  = "#D6604D")) +
+  facet_wrap(~ source, scales = "free_y", ncol = 1) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "Pathway Enrichment",
+    x = "-log10(p-value)",
+    y = NULL
+  ) +
+  theme(
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 11, color = "black"),
+    axis.title.x = element_text(size = 12, margin = margin(t = 8)),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none",
+    strip.background = element_rect(fill = "grey95"),
+    strip.text = element_text(size = 12, face = "bold"),
+    plot.margin = margin(10, 15, 10, 10)
+  )
+
+
+ggsave(filename = "CCC/SScILD/Low/output/Pathway.png",plot = p, width = 10, height = 8, dpi = 300)
+ggsave(filename = "CCC/SScILD/Low/output/Pathway.pdf",plot = p, width = 10, height = 8, dpi = 300)
+
+```
+
+
+
+##7.SCENIC:Gene Regulatory Network
+
+```{r}
+##1run the pyscenic in the terminal, import the data
+##use this methode that divide the data in gene, barcodes and matrix to facilite the import in the terminal
+
+##all details in the words files:SCENIC_pipeline_wd and the.py and .sh files  for the code and information
+
+
+library(Matrix)
+library(SingleCellExperiment)
+
+expr <- assay(.sce, "counts")
+writeMM(expr, "GRN_SCENIC/IPF/Low/input/matrix.mtx")
+
+write.table(rownames(expr),
+            file = "GRN_SCENIC/IPF/Low/input/genes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+write.table(colnames(expr),
+            file = "GRN_SCENIC/IPF/Low/input/barcodes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+
+```
+
+
+
+
+
+
+```{r}
+#--save sce obj
+saveRDS(sce, file="data/process/SeuratObjects/SScILD/Low/sce_processed.rds")
+
+#---read
+sce=readRDS("data/process/SeuratObjects/SScILD/Low/sce_processed.rds")
+
+```
+
+
+
+
+
+
+
+
+
+

@@ -8,6 +8,7 @@ output: html_notebook
 
 ###PACKAGES
 ```{r  setup, include=FALSE}
+
 ##################PACKAGES
 library(Seurat)
 library(Matrix)
@@ -26,6 +27,10 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 
 ```
+
+
+####STEP_1
+
 
 
 ###1 load the data
@@ -53,6 +58,7 @@ rownames(matrix) <- genes
 colnames(matrix) <- barcodes
 
 ```
+
 
 
 ```{r}
@@ -103,6 +109,7 @@ cat("All done!\n")
 
 
 
+
 ```{r}
 
 
@@ -134,8 +141,7 @@ saveRDS(RA50,file = "data/process/SeuratObjects/RA/RA50.rds")
 ```
 
 
-
-###1-the qc 
+###2-the qc 
 ```{r}
 
 ##QC
@@ -165,6 +171,7 @@ RA50 <- subset(RA50, subset = nFeature_RNA > 500 & nFeature_RNA < 7000 & percent
 RA = merge(RA26,
            y = c(RA28,RA49,RA50),
            add.cell.ids = c("RA26", "RA28","RA49","RA50"))
+RA <- subset(RA, subset = nFeature_RNA > 500 & nFeature_RNA < 8000 & percent.mt < 15)
 
 saveRDS(RA, file = "data/process/SeuratObjects/RA/RA_raw.rds")
 
@@ -180,7 +187,7 @@ DefaultAssay(RA)
 
 
 
-###2-Statistics
+###3-Statistics
 ```{r}
 
 ##norm, fvf,scale,runpca
@@ -195,7 +202,8 @@ ElbowPlot(RA, ndims = 50, reduction = "pca")
 ```
 
 
-###3-integration
+
+###4-integration
 ```{r}
 
 ##integration
@@ -231,19 +239,17 @@ for (res in res_cols) {
 }
 dev.off()
 
-
-
 #save 
-p=DimPlot(RA, reduction = "UHarmony", group.by = "res_0_8", label = TRUE,label.size = 8, pt.size = 2) +ggtitle("Resolution_0.8") + NoLegend()
-ggsave(filename = "output/RA/RA_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p=DimPlot(RA, reduction = "UHarmony", group.by = "res_0_8", label = TRUE,label.size = 8, pt.size = 2) +ggtitle("Resolution_0.8") + NoLegend() +
+  labs(x = "UMAP.h", y = "UMAP.h")  
+ggsave(filename = "output/RA/RA_resolution.pdf",plot = p,width = 12,height = 8,dpi = 300)
+
 
 ```
 
 
 
-
-
-###4-Clusters and find markers
+###5-Clusters and find markers
 ```{r}
 ###cluster----------
 
@@ -260,9 +266,7 @@ RA_markers=RA_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 
 
 
-
-
-###5-Annotation
+###6-Annotation
 
 
 ```{r, fig.width=10, fig.height=8}
@@ -332,9 +336,10 @@ p=DotPlot(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
-ggsave(filename = "output/RA/RA_cluster.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/RA/RA_cluster.pdf", plot = p, width = 12, height = 8)
 
 ```
+
 
 
 
@@ -388,10 +393,9 @@ p=DotPlot(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
-ggsave(filename = "output/RA/RA_cluster_name.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/RA/RA_cluster_name.pdf", plot = p, width = 12, height = 10)
 
 ```
-
 
 
 
@@ -428,14 +432,14 @@ RA=RenameIdents(RA, cluster_name)
 RA$Major_Celltype=Idents(RA)
 ##2color
 celltype_cols=c(
-  "Fibroblasts"                  = "#D73027",  
-  "B Cells"                      = "darkblue", 
-  "Arterial Endothelial"         = "#2ca02c", 
-  "Venous Endothelial"           = "gold1", 
-  "Mast Cells"                   = "cyan", 
-  "Mural Cells"                  = "#984EA3",  
-  "CD4"                          = "#E69F00",
-  "CD8"                          = "#E7298A",
+  "Fibroblasts"                  = "cyan",  
+  "B Cells"                      = "gold", 
+  "Arterial Endothelial"         = "cadetblue3", 
+  "Venous Endothelial"           = "chocolate1", 
+  "Mast Cells"                   = "#FDBF6F", 
+  "Mural Cells"                  = "#1F78B4",  
+  "CD4"                          = "olivedrab2",
+  "CD8"                          = "tomato",
   "Macrophages"                  = "orangered"
   
   )
@@ -464,7 +468,7 @@ suppressWarnings({
       inherit.aes = FALSE,
       fill = "white",
       color = "black",
-      size = 3.5,
+      size = 4.5,
       box.padding = 0.4,
       label.size = 0.40,
       segment.color = NA,
@@ -479,11 +483,11 @@ suppressWarnings({
     labs(x = "UMAP.h", y = "UMAP.h")
 })
 fig1a
-ggsave(ggsave(filename = "output/RA/RA_cellType.png", plot = fig1a, width = 12, height = 8))
+ggsave(ggsave(filename = "output/RA/RA_cellType.pdf", plot = fig1a, width = 12, height = 10))
+
+
 
 ```
-
-
 
 
 
@@ -509,12 +513,13 @@ p <- p + theme(
 
 
 
-ggsave(filename = "output/RA/RA_markers.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/RA/RA_markers.pdf", plot = p, width = 12, height = 8)
 
 ```
 
 
-###6.Correlation
+
+###7.Correlation
 ```{r}
 
 ##correlation between celltype
@@ -548,11 +553,10 @@ correlation_matrix <- cor(
 correlation_matrix[is.na(correlation_matrix)] = 0
 
 #5 Save 
-png(
-  filename = "output/RA/RA_correlation.png",
-  width = 3000,
-  height = 2400,
-  res = 300
+pdf(
+  file = "output/RA/RA_correlation.pdf",
+  width = 10,
+  height = 8
 )
 library(pheatmap)
 colors=colorRampPalette(c("#2166AC", "white", "#B2182B"))(100)
@@ -569,7 +573,8 @@ dev.off()
 ```
 
 
-###7 Class Major_Celltype with family
+
+###8 Class Major_Celltype with family
 
 ```{r}
 
@@ -587,45 +592,185 @@ RA$General <- recode(RA$Major_Celltype,
   "Venous Endothelial" = "Endothelial Cells", 
   "B Cells" = "B Cells", 
 )
-View(RA@meta.data)
+
 
 ```
-
-
 
 
 
 ##markers that we can have in TLS 
-```{r, fig.width=12, fig.height=8}
 
-#----------
-markers <- c(
-  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
+```{r}
 
+# Define markers per group from genes_TLS.csv
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
+                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
 
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
+                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
+                  "ICAM1", "VCAM1", "SELE")
 
-p <- DotPlot(
-  RA,
-  features = markers,
-  cols = c("lightgrey", "blue"),
-  col.min = -2.5,
-  col.max = 2.5,
-  dot.min = 0,
-  dot.scale = 6,
-  group.by = "General"
-) + RotatedAxis()
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
+                         "CXCR5", "CCR7", "CXCR4")
 
-p <- p + theme(
-  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
-  axis.text.y = element_text(size = 9, face = "bold")
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+# Combine all markers in order
+markers <- unique(c(germinal_center, inflammation, 
+                    lymphoid_chemokines, hev, fdc))
+
+# Filter to genes present in your Seurat object
+markers <- markers[markers %in% rownames(RA)]
+
+# Build group vector in same order
+marker_groups <- case_when(
+  markers %in% germinal_center    ~ "Germinal Center",
+  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
+  markers %in% hev                ~ "HEV",
+  markers %in% fdc                ~ "FDC"
+)
+names(marker_groups) <- markers
+
+# Group colors
+group_cols <- c(
+  "Germinal Center"         = "#2166AC",
+  "Inflammation & Cytokines"= "#D6604D",
+  "Lymphoid Chemokines"     = "#35978F",
+  "HEV"                     = "#8073AC",
+  "FDC"                     = "#E08214"
 )
 
+# Extract expression and percent data
+Idents(RA) <- "General"
+DefaultAssay(RA) <- "RNA"
+expr_mat <- GetAssayData(RA, layer = "data")
 
+percent_mat <- sapply(levels(Idents(RA)), function(ct) {
+  cells <- WhichCells(RA, idents = ct)
+  Matrix::rowMeans(expr_mat[markers, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
 
-ggsave(filename = "output/RA/TLS_markers.png", plot = p, width = 12, height = 8)
+avg_exp <- AverageExpression(
+  RA,
+  features = markers,
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
+
+exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
+exp_mat[is.infinite(exp_mat)] <- NA
+
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+marker_groups <- marker_groups[rownames(exp_mat)]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+# Color function
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+# Bubble cell function
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
+}
+
+# Column annotation
+celltypes <- colnames(exp_mat_scaled)
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
+)
+
+# Row annotation
+row_ha <- ComplexHeatmap::rowAnnotation(
+  Group = marker_groups,
+  col = list(Group = group_cols),
+  annotation_width = unit(3, "mm"),
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(
+    Group = list(
+      title = "TLS genes",
+      title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+      labels_gp = grid::gpar(fontsize = 9)
+    )
+  )
+)
+
+# Heatmap
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+  row_names_gp = grid::gpar(fontsize = 12, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  top_annotation = column_ha,
+  left_annotation = row_ha,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  row_split = marker_groups,
+  row_title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  row_gap = unit(2, "mm")
+)
+
+pdf("output/RA/TLS_markers.pdf",
+    width = 8, height = 10)
+ComplexHeatmap::draw(ht, merge_legend = TRUE)
+dev.off()
+
 
 ```
 
+
+
+
+
+```{r}
+
+#####for pyscenic 
+expr <- GetAssayData(RA, assay = "RNA", layer = "counts")
+
+writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/RA/input/matrix.mtx")
+
+write.table(rownames(expr),
+            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/RA/input/genes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+write.table(colnames(expr),
+            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/RA/input/barcodes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+```
 
 
 
@@ -656,16 +801,9 @@ write.csv(RA@meta.data,file = "data/process/SeuratObjects/RA/RA.metadata.csv",ro
 saveRDS(RA, file="data/process/SeuratObjects/RA/RA_process.rds")
 
 #load it
-#RA = readRDS("data/process/SeuratObjects/RA/RA_process.rds")
+RA = readRDS("data/process/SeuratObjects/RA/RA_process.rds")
 
 ```
-
-
-
-
-
-
-
 
 
 

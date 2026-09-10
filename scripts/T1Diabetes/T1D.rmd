@@ -7,6 +7,7 @@ output: html_notebook
 ################################################################################################################################
 
 ```{r  setup, include=FALSE}
+
 ##################PACKAGES
 library(Seurat)
 library(Matrix)
@@ -108,8 +109,11 @@ for (res in res_cols) {
 dev.off()
 
 #save 
-p=DimPlot(T1D,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6") +NoLegend()
-ggsave(filename = "output/T1D/T1D_resolution.png",plot = p,width = 12,height = 8,dpi = 300)
+p=DimPlot(T1D,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6") +NoLegend()+
+labs(x = "UMAP.h", y = "UMAP.h") 
+
+ggsave(filename = "output/T1D/T1D_resolution.pdf",plot = p,width = 10,height = 8,dpi = 300)
+
 
 ```
 
@@ -202,7 +206,7 @@ p=DotPlot(
   group.by = "harmony_clusters") + RotatedAxis() 
 p
 #save
-ggsave(filename = "output/T1D/T1D_cluster.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/T1D/T1D_cluster.pdf", plot = p, width = 12, height = 8)
 
 ```
 
@@ -269,9 +273,9 @@ p=DotPlot(
   group.by = "CellType") + RotatedAxis() 
 p
 #save
-ggsave(filename = "output/T1D/T1D_cluster_name.png", plot = p, width = 12, height = 8)
+ggsave(filename = "output/T1D/T1D_cluster_name.pdf", plot = p, width = 13, height = 10)
 
-#View(T1D@meta.data)
+
 
 
 
@@ -314,15 +318,15 @@ T1D=RenameIdents(T1D, cluster_name)
 T1D$Major_Celltype=Idents(T1D)
 ##2color
 celltype_cols=c(
-  "Acinar Cells"            = "#D73027",  
-  "Alpha Cells"             = "#4575B4", 
-  "Ductal Cells"            = "#FDAE61",  
+  "Acinar Cells"            = "coral1",  
+  "Alpha Cells"             = "mediumorchid1", 
+  "Ductal Cells"            = "mistyrose3",  
   "Delta Cells"             = "#762A83",
-  "Endothelial Cells"       = "#66A61E",
-  "Stellate Cells"          = "#FFD92F",
-  "Macrophages"             = "tomato",
-  "Fibroblasts"             ="blue",
-  "Mural Cells"             ="cyan"
+  "Endothelial Cells"       = "#E31A1C",
+  "Stellate Cells"          = "yellow",
+  "Macrophages"             = "orangered",
+  "Fibroblasts"             ="cyan",
+  "Mural Cells"             ="#1F78B4"
   )
 
 colnames(Embeddings(T1D, "umap.harmony"))
@@ -345,7 +349,7 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
     inherit.aes = FALSE,
     fill = "white",
     color = "black",
-    size = 4,
+    size = 4.5,
     box.padding = 0.4,
     label.size = 0.25,
     segment.color = NA
@@ -356,9 +360,9 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
     axis.ticks = element_blank(),
     legend.position = "none"
   ) +
-  labs(x = "umapharmony_1", y = "umapharmony_2")
+  labs(x = "UMAP.h", y = "UMAP.h")
 fig1a
-ggsave(ggsave(filename = "output/T1D/T1D_cellType.png", plot = fig1a, width = 12, height = 8))
+ggsave(ggsave(filename = "output/T1D/T1D_cellType.pdf", plot = fig1a, width = 12, height = 10))
 
 ```
 
@@ -514,8 +518,8 @@ ht=Heatmap(
 # 3️⃣ Save ComplexHeatmap as PNG
 # -------------------------------
 
-png(filename = "output/T1D/T1D_markers.png",
-    width = 3100, height = 2200, res = 300)
+pdf(file = "output/T1D/T1D_markers.pdf",
+    width = 12, height = 10)
 draw(ht)
 dev.off()
 
@@ -527,26 +531,149 @@ dev.off()
 
 ##markers that we can have in TLS 
 ```{r, fig.width=12, fig.height=8}
-#----------
-markers <- c(
-  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
 
-p <- DotPlot(
+# Define markers per group from genes_TLS.csv
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
+                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
+                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
+                  "ICAM1", "VCAM1", "SELE")
+
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
+                         "CXCR5", "CCR7", "CXCR4")
+
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+# Combine all markers in order
+markers <- unique(c(germinal_center, inflammation, 
+                    lymphoid_chemokines, hev, fdc))
+
+# Filter to genes present in your Seurat object
+markers <- markers[markers %in% rownames(T1D)]
+
+# Build group vector in same order
+marker_groups <- case_when(
+  markers %in% germinal_center    ~ "Germinal Center",
+  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
+  markers %in% hev                ~ "HEV",
+  markers %in% fdc                ~ "FDC"
+)
+names(marker_groups) <- markers
+
+# Group colors
+group_cols <- c(
+  "Germinal Center"         = "#2166AC",
+  "Inflammation & Cytokines"= "#D6604D",
+  "Lymphoid Chemokines"     = "#35978F",
+  "HEV"                     = "#8073AC",
+  "FDC"                     = "#E08214"
+)
+
+# Extract expression and percent data
+Idents(T1D) <- "General"
+DefaultAssay(T1D) <- "RNA"
+expr_mat <- GetAssayData(T1D, layer = "data")
+
+percent_mat <- sapply(levels(Idents(T1D)), function(ct) {
+  cells <- WhichCells(T1D, idents = ct)
+  Matrix::rowMeans(expr_mat[markers, cells, drop = FALSE] > 0) * 100
+})
+percent_mat <- as.matrix(percent_mat)
+
+avg_exp <- AverageExpression(
   T1D,
   features = markers,
-  cols = c("lightgrey", "blue"),
-  col.min = -2.5,
-  col.max = 2.5,
-  dot.min = 0,
-  dot.scale = 6,
-  group.by = "Major_Celltype"
-) + RotatedAxis()
+  assays = "RNA",
+  layer = "data",
+  return.seurat = FALSE
+)$RNA
 
-p <- p + theme(
-  axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
-  axis.text.y = element_text(size = 9, face = "bold")
+exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
+exp_mat[is.infinite(exp_mat)] <- NA
+
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
+exp_mat <- exp_mat[keep, ]
+percent_mat <- percent_mat[keep, ]
+marker_groups <- marker_groups[rownames(exp_mat)]
+
+exp_mat[is.na(exp_mat)] <- 0
+mode(exp_mat) <- "numeric"
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
+
+# Color function
+q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
+col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
+
+# Bubble cell function
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.circle(
+    x = x, y = y,
+    r = (percent_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = col_fun(exp_mat_scaled[i, j]), col = "black")
+  )
+}
+
+# Column annotation
+celltypes <- colnames(exp_mat_scaled)
+cols <- grDevices::colorRampPalette(
+  RColorBrewer::brewer.pal(8, "Set2")
+)(length(celltypes))
+names(cols) <- celltypes
+
+column_ha <- ComplexHeatmap::HeatmapAnnotation(
+  celltype = celltypes,
+  col = list(celltype = cols),
+  show_annotation_name = FALSE
 )
- ggsave(filename = "output/T1D/TLS_markers.png", plot = p, width = 12, height = 8)
+
+# Row annotation
+row_ha <- ComplexHeatmap::rowAnnotation(
+  Group = marker_groups,
+  col = list(Group = group_cols),
+  annotation_width = unit(3, "mm"),
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(
+    Group = list(
+      title = "TLS genes",
+      title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+      labels_gp = grid::gpar(fontsize = 9)
+    )
+  )
+)
+
+# Heatmap
+ht <- ComplexHeatmap::Heatmap(
+  exp_mat_scaled,
+  name = "Expression",
+  col = col_fun,
+  rect_gp = grid::gpar(type = "none"),
+  cell_fun = cell_fun,
+  row_names_gp = grid::gpar(fontsize = 12, fontface = "bold"),
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  top_annotation = column_ha,
+  left_annotation = row_ha,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  row_split = marker_groups,
+  row_title_gp = grid::gpar(fontsize = 10, fontface = "bold"),
+  row_gap = unit(2, "mm")
+)
+
+pdf("output/T1D/TLS_markers.pdf",
+    width = 8, height = 10)
+ComplexHeatmap::draw(ht, merge_legend = TRUE)
+dev.off()
+
  
 ```
 
@@ -572,6 +699,33 @@ T1D$General <- recode(T1D$Major_Celltype,
 )
 
 ```
+
+
+
+```{r}
+#pyscenic
+#####for pyscenic 
+expr <- GetAssayData(T1D, assay = "RNA", layer = "counts")
+
+writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/matrix.mtx")
+
+write.table(rownames(expr),
+            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/genes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+write.table(colnames(expr),
+            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/barcodes.tsv",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+
+
+```
+
+
+
 
 
 
@@ -602,10 +756,10 @@ write.csv(T1D@meta.data,file = "data/process/SeuratObjects/T1D/T1D.metadata.csv"
           
 ##rds
 saveRDS(T1D, file="data/process/SeuratObjects/T1D/T1D_process.rds")
-View(T1D@meta.data)
+
 
 #load it
-#T1D = readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
+T1D = readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
 
 
 

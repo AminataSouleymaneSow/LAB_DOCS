@@ -2,18 +2,29 @@
 title: "R Notebook"
 output: html_notebook
 ---
-----------------------------------------------------------------------------------------------------------------------------------
-----------------------------------------##Analysis of the Fusion of all autoimmune diseases#------------------------------------------ --------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------Fusion of all autoimmune diseases------------------------------------------------ ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 
 ```{r setup, include=FALSE}
+
 ##################PACKAGES
-library(pacman)
-  p_load(Seurat, SeuratData, Matrix, dplyr, DropletUtils, presto,gprofiler2, ggplot2, patchwork, gplots, cowplot, openxlsx,plyr, scDblFinder, BiocParallel,devtools,openxlsx,reticulate,)
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
  #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+
 ```
 
 
@@ -21,20 +32,19 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 ```{r}
 #--------process_data
 
-MS = readRDS("data/process/SeuratObjects/Multiple_Sclerosis/MS_process.rds")  
-RA = readRDS("data/process/SeuratObjects/Rheumatoid_Arthritis/RA_process.rds")        
-SS = readRDS("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_process.rds")
-IPF.U = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Upper/IPF_process.rds")
-IPF.L = readRDS("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/IPF.L_process.rds")
-T1D = readRDS("data/process/SeuratObjects/T1Diabetes/T1D_process.rds")
-SS.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
-SS.L = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
-cd45neg=readRDS("data/process/SeuratObjects/SjD/cd45neg_new.rds")
-DefaultAssay(cd45neg) = "RNA"
-cd45neg = DietSeurat(cd45neg, assays = "RNA") #delete the SCT assay
-cd45pos=readRDS("data/process/SeuratObjects/SjD/cd45pos_new.rds")
-DefaultAssay(cd45pos) = "RNA"
-cd45pos = DietSeurat(cd45pos, assays = "RNA") #delete the SCT assay
+MS = readRDS("data/process/SeuratObjects/MS/MS_process.rds")  
+RA = readRDS("data/process/SeuratObjects/RA/RA_process.rds")        
+SS = readRDS("data/process/SeuratObjects/SS/SS_process.rds")
+IPF.U = readRDS("data/process/SeuratObjects/IPF/Upper/IPF.U_process.rds")
+IPF.L = readRDS("data/process/SeuratObjects/IPF/Lower/IPF.L_Final.rds")
+T1D = readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
+SScILD.U = readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+SScILD.L = readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+SjD  = readRDS("data/process/SeuratObjects/SjD/SjD.rds")
+#DefaultAssay(SjD) = "RNA"
+#SjD = DietSeurat(SjD, assays = "RNA") #delete the SCT assay
+
+
 
 
 ```
@@ -55,12 +65,11 @@ objs <- list(
   T1D = T1D,
   SS.U = SS.U,
   SS.L = SS.L,
-  cd45neg = cd45neg,
-  cd45pos = cd45pos
+  SjD = SjD
 )
 #
 sample_ids = c("MS","RA","SS","IPF.U","IPF.L",
-  "T1D","SS.U","SS.L","cd45neg","cd45pos")
+  "T1D","SS.U","SS.L","SjD")
 #fusion
 Fu = merge(
   x = objs[[1]],
@@ -69,296 +78,63 @@ Fu = merge(
   assay = "RNA",         
   merge.data = FALSE      
 )
-
-library(dplyr)
-#change names
-Fu$orig.ident = recode(Fu$orig.ident,
-                       "minus10" = "CD45-",
-                       "minusB1" = "CD45-",
-                       "minusE"  = "CD45-",
-                       "plus10"  = "CD45+",
-                       "plusB1"  = "CD45+",
-                       "plusE"   = "CD45+")
-#save memory
- rm(MS,RA,SS,IPF.U,IPF.L,
-  T1D,SS.U,SS.L,cd45neg,cd45pos,objs,sample_ids)
- gc(full = TRUE)
- 
-```
-
-
-
-##3THE QC
-```{r, fig.width=12, fig.height=8}
-#save the raw_fusion
+Fu$orig.ident <- recode( Fu$orig.ident, "1U" = "IPF.U", "2U" = "IPF.U", "3U" = "IPF.U" )
 saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_raw.rds")
 Fu=readRDS("data/process/SeuratObjects/Fusion/F_raw.rds")
-
+#save memory
+ #rm(MS,RA,SS,IPF.U,IPF.L,
+  #T1D,SS.U,SS.L,cd45neg,cd45pos,objs,sample_ids)
+ #gc(full = TRUE)
+ 
 
 
 ```
 
 
-##4Statistics
+
+
+
+
+##3.Statistics
 ```{r}
 #-------
 #Normalize,fvf,pca,scale
 Fu=NormalizeData(Fu)
 Fu=FindVariableFeatures(Fu)
+Fu[["percent.mt"]] <- PercentageFeatureSet(Fu, pattern = "^MT-")
+sum(is.na(Fu$percent.mt))  # should now print 0
 Fu=ScaleData(Fu, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = Fu))
 Fu=RunPCA(Fu,features = VariableFeatures(object = Fu))
 ElbowPlot(Fu, ndims = 50, reduction = "pca")
 Fu=RunUMAP(Fu,dims = 1:30)
-p=DimPlot(Fu, reduction = "umap",label = TRUE,raster = FALSE)
 
 
 ```
 
-##5 integration
+
+##4 integration
 ```{r}
 #------integration
-
+##integration
 library(harmony)
-Fu =RunHarmony(Fu,group.by.vars = "orig.ident",orig.reduction = "pca",dims.use = 1:30  )
+Fu=RunHarmony(Fu,group.by.vars = "orig.ident",orig.reduction = "pca",dims.use = 1:20  )
 Fu[["RNA"]]=JoinLayers(Fu[["RNA"]])
-Fu = RunUMAP(Fu, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-Reductions(Fu)
+Fu = RunUMAP(Fu, reduction = "harmony", dims= 1:20, reduction.name = "umap.harmony")
 
-```
+#plot
 
-
-
-
-##6 annotation
-```{r}
-#------------celltype
-
-
-#  Fibroblasts_1 to Fibroblasts_5 into "Fibroblasts"
-Fu@meta.data$celltype <- ifelse(
-  grepl("^Fibroblasts_[0-9]+$", Fu@meta.data$celltype),
-  "Fibroblasts",
-  Fu@meta.data$celltype
-)
-#for GC B cells
-Fu@meta.data$celltype <- ifelse(
-  grepl("^GC B cells(_[0-9]+)?$", Fu@meta.data$celltype),
-  "GC B cells",
-  Fu@meta.data$celltype
-)
-#-----extract all the celltype
-# List all groups in your dataset
-orig_groups = unique(Fu@meta.data$orig.ident)
-
-
-#extract all celltype
-celltypes_by_group <- lapply(orig_groups, function(group) {
-  unique(Fu@meta.data$celltype[Fu@meta.data$orig.ident == group])
-})
-
-# Name the list by disease/sample
-names(celltypes_by_group) <- orig_groups
-
-# Print nicely
-for (group in names(celltypes_by_group)) {
-  cat("====", group, "====\n")
-  print(celltypes_by_group[[group]])
-  cat("\n")
-}
-
-#-------______----------------
-
-
-#color
-Idents(Fu) <- "celltype"
-celltype_cols <- c(
-  #-----MS--------------
-    
-"Oligodendrocytes" =           "tomato4",
-"OPC" =                        "tomato",
-"Astrocytes" =                 "sienna",
-"Microgalia" =                 "maroon2",
-"Neurons" =                    "mistyrose2",
-"Vascular Cells" =             "olivedrab3",
-"Pericytes" =                  "paleturquoise2",
-"Monocytes/DC" =               "purple",
-
-#---------RA---------
-"Fibroblasts" =                "yellow4",
-"Plasmacytoid DCs" =           "red",
-"Neutrophils" =                "salmon",
-"Macrophages" =                "sienna2",
-"B cells" =                    "yellow1",
-"Endothelial cells" =          "grey51",
-"NK/T cells" =                 "olivedrab1",
-"Dendritic cells" =            "olivedrab",
-"Mast cells" =                 "palevioletred2",
-"Pericytes/Mural cells" =      "indianred",
-"Plasmablasts" =               "lightpink2",
-
-#--------SS------------
-"Secretory cells"              ="orangered",
-"Neural cells"                 ="red2",
-"Basal Keratinocytes"          ="olivedrab",
-"Keratinocytes"                = "deeppink",
-"Macrophages/DC"               = "cyan4",
-"Terminal Keratinocytes"       = "seagreen1",
-"Smooth Muscle cells"          = "slateblue2"  ,  
-"Melanocytes"                  = "orangered4",
-
-#------Idiopathic P. Fibrosis in Upper Lung-------
-"NK cells"                     = "brown2",
-"Cytotoxic T"                  = "cadetblue1",
-"Aveolar Type 2"               = "aquamarine",
-"Venous Endothelial"           = "chocolate1",
-"Arterial Endothelial"         = "cadetblue",
-"Proliferating cells"          = "coral1",
-"Goblet cells"                 = "cornflowerblue",
-"Monocytes"                    = "darksalmon",
-"Lymphatic Endothelial"        = "brown3",
-"B Lymphocytes"                = "ivory1",
-"Ciliated cells"               =  "saddlebrown",            
-
-#----------Idiopathic P.Fibrosis in Lower Lung------------
-"Basal cells"                  = "indianred3" ,             
-
-#-----Type 1 Diabetes-------
-"Ductal cells"                = "magenta",
-"Acinar cells"                = "mediumorchid3",
-"Alpha cells"                 = "mediumorchid1",
-"Stellate cells"              = "moccasin",
-"Beta cells"                  = "magenta4",
-
-#--------SScILD in Upper lung--------
-"Myeloid cells"               = "tomato1",
-"Capillary Endothelial"      = "red3" ,
-
-#------SScILD in Low lung-------
-"Plasma cells"               = "skyblue1",
-
-#---- CD45- -----------
-"CCL14 Venous Endothelial"             = "gold1",
-"Immunopericytes"                      = "gold3",
-"Epithelial Progenitor cells"          = "gainsboro",
-"Capillary pericytes"                  = "orange4",
-"Intercalated Ductal Epithelial cells" = "palevioletred2",
-"Seromucous Acinar Epithelial cells"   = "thistle",
-"Neuronal cells"                       = "wheat",
-"Serous Acinar Epithelial cells"       = "mistyrose",
-"Immunofibroblasts"                    = "paleturquoise4",
-"Endothelial Progenitors"              = "rosybrown1",
-"Myoepithelial cells"                  = "lightgoldenrod3",
-"VSMC"                                 = "orange1",
-"Mucous Acinar Epithelial cells"       = "palevioletred",
-"SPARC+ COL3A1+ Fibroblasts"           = "yellow",
-"Basal Epithelial cells"               = "aquamarine",
-"Striated Ductal Epithelial cells"     = "azure2",
-"Ionocytes"                            = "darkmagenta",
-
-#------------- CD45+ ----------
-"cDC2"                              = "darkolivegreen3",
-"CD27+ NK cells"                    = "cyan" ,
-"Naive CD8+ T cells"                = "darkcyan",
-"IgA Plasma cells"                  = "deeppink4",
-"M2 Macrophages"                    = "orchid3",
-"CD56+ NK cells"                    = "goldenrod4",
-"CD8+ Trm"                          = "lightsalmon",
-"Cytotoxic Th cells"                = "peachpuff",
-"Infiltrating CD8+ T cells"         = "turquoise4",
-"Exhausted CD8+ T cells"            = "darkkhaki",
-"Exhausted IEG CD8+ T cells"        = "antiquewhite2",
-"Recruited Activated CD8+ T cells"  = "beige",
-"CD8+ Tcm"                          = "darkseagreen1",
-"Naive Th cells"                    = "goldenrod3",
-"Activated Treg cells"              = "grey72",
-"Memory Th cells"                   = "lightcoral",
-"CD8+ Tem"                          = "mediumturquoise",
-"IgG1 Plasma cells"                 = "papayawhip",
-"gd-T cells"                        = "saddlebrown",
-"CD16+ NK cells"                    = "thistle3",
-"IgG3/4 Plasma cells"               = "pink3",
-"TNF+ Plasma cells"                 = "seagreen4",
-"IgM Plasma cells"                  = "violetred2",
-"GC B cells"                        = "yellow3",
-"Migrating Th17 cells"              = "lightsalmon",
-"LTB+ Th17 cells"                   = "yellow2",             
-"Naive Tfh cells"                   = "darkred",
-"Inflammatory CD8+ T cells"         = "green",
-"Recruiting Effector CD8+ Trm"      = "cornsilk1",
-"Mo-DC"                             = "dimgrey",
-"LAMP3+ cDCs"                       = "maroon",
-"Resting Treg cells"                = "seagreen",
-"M1 Macrophages"                    = "orchid",
-"Naive B cells"                     = "lemonchiffon1",
-"inflammatory cDC2"                 = "royalblue3",
-"Tph17"                             = "aliceblue",
-"Secretory Tph cells"               = "antiquewhite2",
-"cDC1"                              = "peru",
-"ILCs"                              = "slategray",
-"CD62L+ TPEx"                       = "orangered2",
-"DLGAP1+ Th cells"                  = "seagreen1"
-) 
-
+p = DimPlot(Fu, reduction = "umap.harmony", group.by = "orig.ident", label = FALSE)
+p = p + labs(x = "UMAP.h", y = "UMAP.h",title = NULL)
+ggsave(filename = "output/Fusion/UMAP.pdf", width=10, height = 8, plot = p)
 
 
 ```
 
-
-
-
-```{r}
-#----Plot-----with_the_celltype--------
-
-
-# Plain UMAP plot (no labels yet)
-p <- DimPlot(
-  Fu,
-  reduction = "umap.harmony",
-  group.by = "celltype",
-  label = FALSE,       # no labels here
-  cols = celltype_cols,
-  raster = TRUE
-) +
-  NoLegend() +          # remove legend
-  theme(aspect.ratio = 1)
-
-# Add cluster labels with white color and more spacing
-p_labeled <- LabelClusters(
-  plot = p,
-  id = "celltype",
-  repel = TRUE,
-  box = TRUE,
-  max.overlaps = 1000,   # attempt to label all clusters
-  color = "black",       # make labels white
-  force = 2,             # increases spacing between labels
-  box.padding = 0.5      # more space around label boxes
-) +
-  labs(title = NULL)      # remove "celltype" title
-
-# Save
-png("output/Fusion/F_cellType.png",
-    width = 4000, height = 3500, res = 200)
-print(p_labeled)
-dev.off()
-
-```
 
 
 ```{r}
 
 #---plot---with_the_DISEASE_type---------
-
-# Rename orig.ident (already done)
-Fu$orig.ident <- recode(Fu$orig.ident,
-  "Multiple Sclerosis"                   = "MS",
-  "Rheumatoid Arthritis"                 = "RA",
-  "Systemic Sclerosis in Skin"           = "SS",
-  "Idiopathic P. Fibrosis in Upper Lung" = "IPF.Up",
-  "Idiopathic P.Fibrosis in Lower Lung"  = "IPF.Low",
-  "Type 1 Diabete"                       = "T1D", 
-  "SScILD in Upper lung"                 = "SScILD.U",
-  "SScILD in Low lung"                   = "SScILD.L"
-)
 
 # Convert to factor without a name
 Fu$orig.ident <- factor(Fu$orig.ident)
@@ -369,16 +145,15 @@ Idents(Fu) <- "orig.ident"
 
 # Define colors
 disease_colors <- c(
-  "MS"       = "orange",
-  "RA"       = "red3",
-  "SS"       = "yellow",
-  "IPF.Up"   = "cyan4",
-  "IPF.Low"  = "blue",
-  "T1D"      = "olivedrab1",
-  "SScILD.U" = "rosybrown1",
-  "SScILD.L" = "tomato",
-  "CD45-"    = "magenta",
-  "CD45+"    = "magenta"
+  "MS"        = "darkolivegreen3",
+  "RA"        = "red3",
+  "SS"        = "orangered",
+  "IPF.U"     = "cyan4",
+  "IPF.L"     = "cyan",
+  "T1D"      = "darkred",
+  "SScILD.U" = "gold",
+  "SScILD.L" = "magenta",
+  "SjD"      = "darkblue"
 )
 
 # UMAP plot
@@ -397,50 +172,688 @@ P <- DimPlot(
   ) +
   labs(title = NULL) # Removes the default title
 
-P
-ggsave(filename = "output/Fusion/F_disease.png", plot = P, height = 8, width = 12)
+P = P + labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/Fusion/disease.pdf", plot = P, height = 15, width = 10)
+
+
+
+
+#---plot---with_the_DISEASE_type---------
+
+# Convert to factor without a name
+Fu$orig.ident <- factor(Fu$orig.ident)
+names(attributes(Fu$orig.ident)$levels) <- NULL   # removes the legend title
+
+# Set Idents
+Idents(Fu) <- "orig.ident"
+
+# Define colors
+disease_colors <- c(
+  "MS"        = "darkolivegreen3",
+  "RA"        = "red3",
+  "SS"        = "orangered",
+  "IPF.U"     = "cyan",
+  "IPF.L"     = "cyan",
+  "T1D"      = "darkred",
+  "SScILD.U" = "gold",
+  "SScILD.L" = "gold",
+  "SjD"      = "darkblue"
+)
+
+# UMAP plot
+P <- DimPlot(
+  Fu,
+  reduction = "umap.harmony",
+  group.by = "orig.ident",
+  label = FALSE,
+  cols = disease_colors,
+  raster = TRUE
+) +
+  theme(
+    aspect.ratio = 1,
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  ) +
+  labs(title = NULL) # Removes the default title
+
+P = P + labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/Fusion/disease2.pdf", plot = P, height = 8, width = 12)
 
 
 
 ```
 
 
-##7Correlation
+###5.plot
 ```{r}
-#------
-Idents(Fu) <- "orig.ident"
+library(Seurat)
+library(ggplot2)
 
-# 2️⃣ Average expression per cell type
-av.expSS <- AverageExpression(
-  Fu,
+#-----extract all the celltype
+
+# List all groups in your dataset
+orig_groups <- unique(Fu@meta.data$orig.ident)
+
+# extract all celltype
+celltypes_by_group <- lapply(orig_groups, function(group) {
+  unique(Fu@meta.data$Major_Celltype[Fu@meta.data$orig.ident == group])
+})
+
+# name the list by disease
+names(celltypes_by_group) <- orig_groups
+
+# print
+for (group in names(celltypes_by_group)) {
+  cat("====", group, "====\n")
+  print(celltypes_by_group[[group]])
+  cat("\n")
+}
+
+
+#0. exclude "Immune Cells" - this is an annotation error, not a real
+# cell type category, so it's dropped before plotting
+
+excluded_celltypes <- c("Immune Cells")
+
+Fu_plot <- subset(Fu, subset = Major_Celltype %in% setdiff(
+  unique(Fu@meta.data$Major_Celltype), excluded_celltypes
+))
+
+cat("Cell types kept for the plot:\n")
+print(sort(unique(Fu_plot@meta.data$Major_Celltype)))
+
+
+#1. color palette (full list you provided, one color per cell type)
+
+Idents(Fu_plot) <- "Major_Celltype"
+
+celltype_cols <- c(
+  #---- MS ----
+  "Oligodendrocytes"           = "tomato4",
+  "OPC"                        = "firebrick3",
+  "Astrocytes"                 = "salmon3",
+  "Microglia"                  = "sienna",
+  "Neurons"                    = "mistyrose3",
+  "Endothelial Cells"          = "olivedrab3",
+  "CD8"                        = "tomato",
+  "Fibroblasts"                = "maroon2",
+  "Mural Cells"                = "paleturquoise3",
+  "CD4"                        = "purple",
+  #---- RA ----
+  "Macrophages"                = "sienna2",
+  "Mast Cells"                 = "palevioletred2",
+  "Venous Endothelial"         = "chocolate1",
+  "Arterial Endothelial"       = "cadetblue",
+  "B Cells"                    = "yellow3",
+  #---- SS ----
+  "Secretory Cells"            = "orangered",
+  "Smooth Muscle Cells"        = "slateblue2",
+  "Suprabasal Keratinocyte"    = "deeppink",
+  "Schwann Cells"              = "plum3",
+  "Basal Keratinocyte"         = "olivedrab",
+  "Melanocytes"                = "orangered4",
+  "Dendritic Cells"            = "olivedrab2",
+  "Lymphatic Endothelial"      = "brown3",
+  #---- IPF.U ----
+  "Goblet Cells"               = "cornflowerblue",
+  "NK Cells"                   = "brown2",
+  "Peribronchial Endothelial"  = "darkgoldenrod2",
+  "Proliferating Cells"        = "coral1",
+  "Monocytes"                  = "darksalmon",
+  "Ciliated Cells"             = "saddlebrown",
+  "Alveolar Cells"             = "aquamarine3",
+  #---- IPF.L ----
+  "Basal Cells"                = "indianred3",
+  #---- T1D ----
+  "Ductal Cells"               = "magenta",
+  "Acinar Cells"               = "mediumorchid3",
+  "Alpha Cells"                = "mediumorchid1",
+  "Delta Cells"                = "mediumpurple2",
+  #---- SScILD.U ----
+  "Capillary Endothelial"      = "red3",
+  "Myeloid Cells"              = "tomato1",
+  "Plasmacytoid Dendritic"     = "red",
+  #---- SjD ----
+  "Mono/Mac"                   = "peru",
+  "gd/NK"                      = "steelblue2",
+  "Plasma Cells"               = "lightpink2"
+)
+
+# safety check: every kept cell type must have an assigned color
+missing_colors <- setdiff(unique(Fu_plot@meta.data$Major_Celltype), names(celltype_cols))
+if (length(missing_colors) > 0) {
+  cat("WARNING - these cell types have no assigned color:\n")
+  print(missing_colors)
+}
+
+
+#2. plain UMAP (no labels yet)
+
+p <- DimPlot(
+  Fu_plot,
+  reduction = "umap.harmony",
+  group.by = "Major_Celltype",
+  label = FALSE,
+  cols = celltype_cols,
+  raster = TRUE
+) +
+  NoLegend() +
+  theme(aspect.ratio = 1) +
+  xlab("UMAP.h") +
+  ylab("UMAP.h")
+
+
+#3. add cluster labels
+
+p_labeled <- LabelClusters(
+  plot = p,
+  id = "Major_Celltype",
+  repel = TRUE,
+  box = TRUE,
+  max.overlaps = 1000,
+  color = "black",
+  fontface = "bold",
+  size = 4,
+  force = 6,
+  force_pull = 0.5,
+  box.padding = 0.8,
+  point.padding = 0.4,
+  min.segment.length = 0
+) +
+  labs(title = NULL)
+
+
+#4. save
+
+pdf("output/Fusion/Major_Celltype_all.pdf",
+    width = 12, height = 10)
+print(p_labeled)
+dev.off()
+
+cat("Saved: output/Fusion/Major_Celltype_all.pdf\n")
+
+
+```
+
+
+
+
+##.shared celltype
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(grid)
+
+#0. exclude the same cell types used throughout the project, starting
+# directly from Fu's metadata
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+                         "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+                         "Plasma Cells")
+meta_filtered <- Fu@meta.data %>%
+  filter(!General %in% excluded_celltypes)
+cat("Cell types remaining after exclusion:\n")
+print(sort(unique(meta_filtered$General)))
+
+#1. count how many diseases per cell type (using the FILTERED metadata)
+tab <- table(meta_filtered$General, meta_filtered$orig.ident)
+n_diseases <- rowSums(tab > 0)
+celltype_disease_table <- data.frame(
+  General = rownames(tab),
+  n_diseases = n_diseases,
+  diseases = apply(tab > 0, 1, function(x) {
+    paste(colnames(tab)[x], collapse = ", ")
+  }),
+  row.names = NULL
+)
+
+#2. extract only shared cell types (present in >=2 diseases)
+shared_celltypes <- celltype_disease_table$General[
+  celltype_disease_table$n_diseases >= 2
+]
+shared_celltype_table <- celltype_disease_table[
+  celltype_disease_table$n_diseases >= 2,
+]
+write.csv(
+  shared_celltype_table,
+  file = "output/Fusion/shared_celltype.csv",
+  row.names = FALSE
+)
+cat("Shared cell types (>=2 diseases):\n")
+print(shared_celltypes)
+
+#3. count cells per shared cell type per disease
+count_tbl_shared <- meta_filtered %>%
+  filter(General %in% shared_celltypes) %>%
+  dplyr::count(General, orig.ident) %>%
+  filter(n >= 2)
+
+#4. convert to matrix
+count_mat_shared <- count_tbl_shared %>%
+  pivot_wider(
+    names_from = orig.ident,
+    values_from = n,
+    values_fill = 0
+  )
+count_mat_shared <- as.data.frame(count_mat_shared)
+rownames(count_mat_shared) <- count_mat_shared$General
+count_mat_shared$General <- NULL
+count_mat_shared <- as.matrix(count_mat_shared)
+
+#5. convert counts to PERCENTAGE of cells per disease
+# (each column = one disease; total is the FULL filtered cell count for
+# that disease, across all kept cell types - not just the shared ones -
+# so percentages reflect true composition, not just the shared subset)
+total_per_disease <- meta_filtered %>%
+  dplyr::count(orig.ident) %>%
+  tibble::deframe()
+# align to the same disease columns as count_mat_shared, in the same order
+total_per_disease <- total_per_disease[colnames(count_mat_shared)]
+percent_mat_shared <- sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100
+percent_mat_shared <- round(percent_mat_shared, 1)
+
+#6. plot - color and displayed numbers both use PERCENTAGE now
+# (only change from before: a "% of cells" title is added above the
+# legend color bar. pheatmap has no built-in argument for that, so the
+# heatmap is built once on a disposable scratch device to get its
+# gtable, then drawn exactly once on the real output device with the
+# title text added on top.)
+out_width  <- 10
+out_height <- 12
+
+scratch_file <- tempfile(fileext = ".pdf")
+pdf(scratch_file, width = out_width, height = out_height)
+p <- pheatmap::pheatmap(
+  percent_mat_shared,
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  display_numbers = percent_mat_shared,
+  number_color = "white",
+  fontsize_row = 12,
+  fontsize_col = 12,
+  fontsize_number = 12,
+  color = colorRampPalette(c("grey", "red", "red3"))(100),
+  border_color = NA,
+  silent = TRUE
+)
+dev.off()
+unlink(scratch_file)
+
+gt <- p$gtable
+
+pdf("output/Fusion/HEATMAP_shared_celltype.pdf", width = out_width, height = out_height)
+grid.newpage()   # start the page BEFORE any convertWidth/Height call below,
+                  # otherwise that call silently creates its own blank page
+
+w <- convertWidth(gt$widths, "npc", valueOnly = TRUE)
+h <- convertHeight(gt$heights, "npc", valueOnly = TRUE)
+leg_row <- gt$layout[gt$layout$name == "legend", ]
+leg_x1 <- sum(w[seq_len(leg_row$r)])
+leg_y1 <- 1 - sum(h[seq_len(leg_row$t - 1)])
+
+grid.draw(gt)
+grid.text(
+  "% of cells",
+  x = unit(leg_x1, "npc"),
+  y = unit(leg_y1 + 0.015, "npc"),
+  just = c("right", "bottom"),
+  gp = gpar(fontsize = 10, fontface = "bold")
+)
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+library(harmony)
+library(Seurat)
+library(ggplot2)
+
+#----Plot-----with_the_celltype--------
+
+#1. extract unique cell types from General, and remove the same
+# excluded cell types used throughout the rest of the project
+
+all_general_celltypes <- sort(unique(Fu$General))
+print(all_general_celltypes)
+
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+                         "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+                         "Plasma Cells")
+
+keep_celltypes <- setdiff(all_general_celltypes, excluded_celltypes)
+cat("Cell types kept for the plot:\n")
+print(keep_celltypes)
+cat("Cell types excluded:\n")
+print(intersect(all_general_celltypes, excluded_celltypes))
+
+#2. subset the Seurat object to only the cells we're keeping
+# (DimPlot/LabelClusters need the object itself filtered, not just the color list)
+
+Fu_plot <- subset(Fu, subset = General %in% keep_celltypes)
+
+
+#3. fixed color per cell type (same palette used across the project)
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+# safety check: every kept cell type must have an assigned color
+missing_colors <- setdiff(keep_celltypes, names(celltype_cols))
+if (length(missing_colors) > 0) {
+  cat("WARNING - these cell types have no assigned color yet:\n")
+  print(missing_colors)
+}
+
+
+#4. Plain UMAP plot (no labels yet)
+
+p <- DimPlot(
+  Fu_plot,
+  reduction = "umap.harmony",
+  group.by = "General",
+  label = FALSE,
+  cols = celltype_cols,
+  raster = TRUE
+) +
+  NoLegend() +
+  theme(aspect.ratio = 1) +
+  xlab("UMAP.h") +
+  ylab("UMAP.h")
+
+#5. add cluster labels (fixed typo: id = "General", not "Genarl")
+# increased size/force/padding so labels in dense regions (e.g. Mono/Mac)
+# are pushed further away and stay readable
+
+p_labeled <- LabelClusters(
+  plot = p,
+  id = "General",
+  repel = TRUE,
+  box = TRUE,
+  max.overlaps = 1000,
+  color = "white",
+  fontface = "bold",
+  size = 8,
+  force = 6,
+  force_pull = 0.5,
+  box.padding = 0.8,
+  point.padding = 0.4,
+  min.segment.length = 0
+) +
+  labs(title = NULL)
+
+#6. save
+
+pdf("output/Fusion/General_cellType.pdf",
+    width = 12, height = 8)
+print(p_labeled)
+dev.off()
+
+cat("Saved: output/Fusion/General_cellType.pdf\n")
+
+
+```
+
+
+
+##7Correlation
+
+```{r}
+library(Seurat)
+library(pheatmap)
+
+#------
+
+#1. filter to only the cell types we're keeping (same exclusion list
+# used throughout the project)
+
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+                         "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+                         "Plasma Cells")
+
+all_general_celltypes <- sort(unique(Fu$General))
+keep_celltypes <- setdiff(all_general_celltypes, excluded_celltypes)
+
+cat("Cell types kept for the correlation:\n")
+print(keep_celltypes)
+
+Fu_corr <- subset(Fu, subset = General %in% keep_celltypes)
+
+
+#2. set identity to orig.ident (sample/dataset), on the FILTERED object
+
+Idents(Fu_corr) <- "orig.ident"
+
+
+#3. average expression per identity, computed only on kept cells
+
+av.exp <- AverageExpression(
+  Fu_corr,
   assays = "RNA",
   slot = "data"
 )$RNA
-# rows = genes, columns = cell types
+# rows = genes, columns = identities (orig.ident)
 
-# 3️⃣ Cell-type correlation matrix
-correlation_matrixSS <- cor(
-  as.matrix(av.expSS),
+
+#4. correlation matrix
+
+correlation_matrix <- cor(
+  as.matrix(av.exp),
   use = "pairwise.complete.obs"
 )
 
 # safety cleanup
-correlation_matrixSS[is.na(correlation_matrixSS)]=0
+correlation_matrix[is.na(correlation_matrix)] <- 0
+
+
+#5. heatmap
+# NOTE: pheatmap() saves and closes the PNG device internally when given
+# a filename - no separate dev.off() call is needed (or wanted) after it
 
 mcol <- colorRampPalette(c("white", "darkblue", "red"))(100)
 
 pheatmap(
-  correlation_matrixSS,
+  correlation_matrix,
   clustering_method = "ward.D2",
   color = mcol,
   border_color = NA,
   fontsize_row = 10,
   fontsize_col = 10,
   display_numbers = FALSE,
-  filename = "output/Fusion/F_correlation.png", 
-  width = 12,   # in inches
+  filename = "output/Fusion/correlation.pdf",
+  width = 12,
   height = 10
 )
+
+```
+
+
+
+##9.shared pathways between diseases
+```{r}
+
+##1.load pathways
+MS=read.csv("CCC/MS/output/PathwaysGO.csv")
+RA=read.csv("CCC/RA/output/PathwaysGO.csv")
+SS=read.csv("CCC/SS/output/PathwaysGO.csv")
+T1D=read.csv("CCC/T1D/output/PathwaysGO.csv")
+SjD=read.csv("CCC/SjD/output/PathwaysGO.csv")
+IPF.U=read.csv("CCC/IPF/Upper/output/PathwaysGO.csv")
+IPF.L=read.csv("CCC/IPF/Low/output/PathwaysGO.csv")
+SScILD.U=read.csv("CCC/SScILD/Upper/output/PathwaysGO.csv")
+SScILD.L=read.csv("CCC/SScILD/Low/output/PathwaysGO.csv")
+
+
+
+
+```
+
+
+```{r}
+
+##2. Extract significant pathways per disease
+MS.sig       <- MS[MS$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+RA.sig       <- RA[RA$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+SS.sig       <- SS[SS$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+T1D.sig      <- T1D[T1D$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+SjD.sig      <- SjD[SjD$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+IPF.U.sig    <- IPF.U[IPF.U$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+IPF.L.sig    <- IPF.L[IPF.L$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+SScILD.U.sig <- SScILD.U[SScILD.U$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+SScILD.L.sig <- SScILD.L[SScILD.L$significant == TRUE, c("term_id", "term_name", "source", "p_value")]
+
+##3. Get all unique term_id + term_name + source combinations
+all_terms <- unique(rbind(
+  MS.sig[,       c("term_id", "term_name", "source")],
+  RA.sig[,       c("term_id", "term_name", "source")],
+  SS.sig[,       c("term_id", "term_name", "source")],
+  T1D.sig[,      c("term_id", "term_name", "source")],
+  SjD.sig[,      c("term_id", "term_name", "source")],
+  IPF.U.sig[,    c("term_id", "term_name", "source")],
+  IPF.L.sig[,    c("term_id", "term_name", "source")],
+  SScILD.U.sig[, c("term_id", "term_name", "source")],
+  SScILD.L.sig[, c("term_id", "term_name", "source")]
+))
+
+##4. Function to get p_value for a term in a disease (NA if not present)
+get_pval <- function(term_ids, disease_df) {
+  pval <- disease_df$p_value[match(term_ids, disease_df$term_id)]
+  return(pval)
+}
+
+##5. Build shared table with presence/absence + best_pval only
+shared <- data.frame(
+  term_id   = all_terms$term_id,
+  term_name = all_terms$term_name,
+  source    = all_terms$source,
+  # presence/absence
+  MS        = all_terms$term_id %in% MS.sig$term_id,
+  RA        = all_terms$term_id %in% RA.sig$term_id,
+  SS        = all_terms$term_id %in% SS.sig$term_id,
+  T1D       = all_terms$term_id %in% T1D.sig$term_id,
+  SjD       = all_terms$term_id %in% SjD.sig$term_id,
+  IPF.U     = all_terms$term_id %in% IPF.U.sig$term_id,
+  IPF.L     = all_terms$term_id %in% IPF.L.sig$term_id,
+  SScILD.U  = all_terms$term_id %in% SScILD.U.sig$term_id,
+  SScILD.L  = all_terms$term_id %in% SScILD.L.sig$term_id
+)
+
+##6. Count how many diseases share each pathway
+shared$n_diseases <- rowSums(shared[, 4:12])
+
+##7. Keep only pathways present in at least 2 diseases
+shared <- shared[shared$n_diseases >= 2, ]
+
+##8. Take the smallest p_value across all diseases directly
+shared$best_pval <- apply(
+  cbind(
+    get_pval(shared$term_id, MS.sig),
+    get_pval(shared$term_id, RA.sig),
+    get_pval(shared$term_id, SS.sig),
+    get_pval(shared$term_id, T1D.sig),
+    get_pval(shared$term_id, SjD.sig),
+    get_pval(shared$term_id, IPF.U.sig),
+    get_pval(shared$term_id, IPF.L.sig),
+    get_pval(shared$term_id, SScILD.U.sig),
+    get_pval(shared$term_id, SScILD.L.sig)
+  ),
+  1, function(x) min(x, na.rm = TRUE))
+
+##9. Sort by most shared then most significant
+shared <- shared[order(-shared$n_diseases, shared$best_pval), ]
+
+##10. Save
+write.csv(shared, "CCC/Fusion/output/shared_pathways.csv", row.names = FALSE)
+
+##11. Quick summary
+cat("Total shared pathways:", nrow(shared), "\n")
+cat("\nBreakdown by n_diseases:\n")
+print(table(shared$n_diseases))
+cat("\nBreakdown by source:\n")
+print(table(shared$source))
+
+
+```
+
+
+```{r}
+
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+library(dplyr)
+
+mat_full <- as.matrix(shared[, 4:12] + 0)
+rownames(mat_full) <- shared$term_name
+
+top_n <- 25
+n_diseases_per_pathway <- rowSums(mat_full)
+top_pathways <- names(sort(n_diseases_per_pathway, decreasing = TRUE))[1:top_n]
+
+mat <- mat_full[top_pathways, , drop = FALSE]
+
+mat_labels <- matrix(ifelse(mat == 1, "Present", "Absent"),
+                      nrow = nrow(mat), dimnames = dimnames(mat))
+col_map <- c("Absent" = "white", "Present" = "darkblue")
+
+source_cols <- c("GO:BP" = "#1B9E77", "REAC" = "#D95F02")
+row_ha <- rowAnnotation(
+  Source = shared$source[match(top_pathways, shared$term_name)],
+  col = list(Source = source_cols),
+  show_annotation_name = FALSE
+)
+
+n_rows <- nrow(mat)
+n_cols <- ncol(mat)
+
+ht <- Heatmap(
+  mat_labels,
+  name = "Presence",
+  col = col_map,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_row_dend = TRUE,
+  row_dend_side = "left",
+  row_dend_width = unit(30, "mm"),
+  width  = unit(n_cols * 15, "mm"),   # fix column width too, so it doesn't stretch to fill a big page
+  height = unit(n_rows * 10, "mm"),
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 14),
+  column_names_gp = gpar(fontsize = 12),
+  column_names_rot = 45,
+  row_names_max_width = max_text_width(rownames(mat), gp = gpar(fontsize = 14)) + unit(4, "mm"),
+  left_annotation = row_ha,
+  heatmap_legend_param = list(title = "Presence"),
+  border = TRUE
+)
+
+# tighten the page to match the fixed component sizes instead of guessing big
+pdf("CCC/Fusion/output/heatmap_shared_pathways.pdf",
+    width  = 5 + n_cols * 0.6,   # dend + annotation + body + row names + legend, roughly
+    height = 3 + n_rows * 0.42)  # column labels + body, roughly
+
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))  # bottom, left, top, right
 dev.off()
 
 ```
@@ -454,15 +867,2144 @@ dev.off()
 
 
 
+```{r}
+
+#.12 Presence/absence heatmap (58 pathways)
+library(pheatmap)
+
+mat <- as.matrix(shared[, 4:12] + 0)
+rownames(mat) <- shared$term_name
+
+pheatmap(mat,
+         color          = c("white", "darkblue"),
+         cluster_rows   = TRUE,
+         cluster_cols   = FALSE,
+         fontsize_row   = 8,
+         fontsize_col   = 10,
+         legend_breaks  = c(0, 1),
+         legend_labels  = c("Absent", "Present"),
+         filename       = "CCC/Fusion/output/heatmap_shared_pathways.pdf",
+         width          = 14,
+         height         = 14)
+
+##13. UpSet plot
+library(UpSetR)
+
+upset_list <- list(
+  MS       = MS.sig$term_id,
+  RA       = RA.sig$term_id,
+  SS       = SS.sig$term_id,
+  T1D      = T1D.sig$term_id,
+  SjD      = SjD.sig$term_id,
+  IPF.U    = IPF.U.sig$term_id,
+  IPF.L    = IPF.L.sig$term_id,
+  SScILD.U = SScILD.U.sig$term_id,
+  SScILD.L = SScILD.L.sig$term_id
+)
+
+pdf("CCC/Fusion/output/upset_shared_pathways.pdf", 
+    width  = 16, 
+    height = 12,
+    onefile = FALSE)
+
+suppressWarnings(
+  upset(fromList(upset_list),
+        nsets           = 9,
+        order.by        = "freq",
+        decreasing      = TRUE,
+        mb.ratio        = c(0.6, 0.4),
+        text.scale      = c(1.5, 1.5, 1.2, 1.2, 1.5, 1.2),
+        point.size      = 4,
+        line.size       = 1,
+        mainbar.y.label = "Number of Shared Pathways",
+        sets.x.label    = "Pathways per Disease",
+        main.bar.color  = "#2166AC",
+        sets.bar.color  = "#D6604D")
+)
+
+dev.off()
+
+```
+
+
+
+
+##10 shared interactioins between diseases
 
 
 ```{r}
+library(dplyr)
+#1. load
+MS       = read.csv("CCC/MS/output/liana_filt.csv")
+RA       = read.csv("CCC/RA/output/liana_filt.csv")
+SS       = read.csv("CCC/SS/output/liana_filt.csv")
+T1D      = read.csv("CCC/T1D/output/liana_filt.csv")
+SjD      = read.csv("CCC/SjD/output/liana_filt.csv")
+SScILD.U = read.csv("CCC/SScILD/Upper/output/liana_filt.csv")
+SScILD.L = read.csv("CCC/SScILD/Low/output/liana_filt.csv")
+IPF.U    = read.csv("CCC/IPF/Upper/output/liana_filt.csv")
+IPF.L    = read.csv("CCC/IPF/Low/output/liana_filt.csv")
+diseases_list <- list(
+  MS = MS, RA = RA, SS = SS, T1D = T1D, SjD = SjD,
+  SScILD.U = SScILD.U, SScILD.L = SScILD.L,
+  IPF.U = IPF.U, IPF.L = IPF.L
+)
+
+# sanity check: confirm every disease's file actually has the columns
+# step 3 depends on, BEFORE we try to build "interaction" from them
+for (d in names(diseases_list)) {
+  cols <- names(diseases_list[[d]])
+  missing <- setdiff(c("ligand.complex", "receptor.complex", "magnitude_rank", "source", "target"), cols)
+  if (length(missing) > 0) {
+    cat("[WARNING]", d, "is missing columns:", paste(missing, collapse = ", "), "\n")
+    cat("  actual columns in", d, ":", paste(cols, collapse = ", "), "\n")
+  }
+}
+
+#2. rename cell types in source/target
+celltype_rename_map <- c(
+  "Astrocytes" = "Glial Cells",
+  "Oligodendrocytes" = "Glial Cells",
+  "OPC" = "Glial Cells",
+  "Schwann Cells" = "Glial Cells",
+  "Neurons" = "Neurons",
+  "Endothelial Cells" = "Endothelial Cells",
+  "Arterial Endothelial" = "Endothelial Cells",
+  "Venous Endothelial" = "Endothelial Cells",
+  "Lymphatic Endothelial" = "Endothelial Cells",
+  "Capillary Endothelial" = "Endothelial Cells",
+  "Peribronchial Endothelial" = "Endothelial Cells",
+  "Macrophages" = "Mono/Mac",
+  "Monocytes" = "Mono/Mac",
+  "Myeloid Cells" = "Mono/Mac",
+  "Mono/Mac" = "Mono/Mac",
+  "Dendritic Cells" = "Mono/Mac",
+  "Plasmacytoid Dendritic" = "Mono/Mac",
+  "Microglia" = "Mono/Mac",
+  "Alveolar Cells" = "Epithelial Cells",
+  "Ciliated Cells" = "Epithelial Cells",
+  "Goblet Cells" = "Epithelial Cells",
+  "Basal Cells" = "Epithelial Cells",
+  "Secretory Cells" = "Epithelial Cells",
+  "Acinar Cells" = "Epithelial Cells",
+  "Ductal Cells" = "Epithelial Cells",
+  "Basal Keratinocyte" = "Keratinocytes",
+  "Suprabasal Keratinocyte" = "Keratinocytes",
+  "Alpha Cells" = "Endocrine Cells",
+  "Delta Cells" = "Endocrine Cells",
+  "CD4" = "CD4",
+  "CD8" = "CD8",
+  "B Cells" = "B Cells",
+  "Fibroblasts" = "Fibroblasts",
+  "Mast Cells" = "Mast Cells",
+  "Melanocytes" = "Melanocytes",
+  "Mural Cells" = "Mural Cells",
+  "Smooth Muscle Cells" = "Smooth Muscle Cells",
+  "Immune Cells" = "Immune Cells",
+  "NK Cells" = "NK Cells",
+  "Plasma Cells" = "Plasma Cells",
+  "Proliferating Cells" = "Proliferating Cells"
+)
+# rename for SjD
+celltype_rename_map <- c(celltype_rename_map, c(
+  "Neuronal cells" = "Neurons",
+  "Lymphatic Endothelial cells" = "Endothelial Cells",
+  "CCL14 Venous Endothelial" = "Endothelial Cells",
+  "Endothelial Progenitors" = "Endothelial Cells",
+  "cDC1" = "Mono/Mac",
+  "cDC2" = "Mono/Mac",
+  "inflammatory cDC2" = "Mono/Mac",
+  "Mo-DC" = "Mono/Mac",
+  "M1 Macrophages" = "Mono/Mac",
+  "M2 Macrophages" = "Mono/Mac",
+  "Basal Epithelial cells" = "Epithelial Cells",
+  "Epithelial Progenitor cells" = "Epithelial Cells",
+  "Intercalated Ductal Epithelial cells" = "Epithelial Cells",
+  "Ionocytes" = "Epithelial Cells",
+  "Mucous Acinar Epithelial cells" = "Epithelial Cells",
+  "Myoepithelial cells" = "Epithelial Cells",
+  "Seromucous Acinar Epithelial cells" = "Epithelial Cells",
+  "Serous Acinar Epithelial cells" = "Epithelial Cells",
+  "Striated Ductal Epithelial cells" = "Epithelial Cells",
+  "Activated Treg cells" = "CD4",
+  "Resting Treg cells" = "CD4",
+  "Cytotoxic Th cells" = "CD4",
+  "DLGAP1+ Th cells" = "CD4",
+  "LTB+ Th17 cells" = "CD4",
+  "Memory Th cells" = "CD4",
+  "Migrating Th17 cells" = "CD4",
+  "Naive Tfh cells" = "CD4",
+  "Naive Th cells" = "CD4",
+  "Secretory Tph cells" = "CD4",
+  "Tph17" = "CD4",
+  "CD62L+ TPEx" = "CD8",
+  "CD8+ Tcm" = "CD8",
+  "CD8+ Tem" = "CD8",
+  "CD8+ Trm" = "CD8",
+  "Exhausted CD8+ T cells" = "CD8",
+  "Exhausted IEG CD8+ T cells" = "CD8",
+  "Infiltrating CD8+ T cells" = "CD8",
+  "Inflammatory CD8+ T cells" = "CD8",
+  "Naive CD8+ T cells" = "CD8",
+  "Recruited Activated CD8+ T cells" = "CD8",
+  "Recruiting Effector CD8+ Trm" = "CD8",
+  "GC B cells" = "B Cells",
+  "Naive B cells" = "B Cells",
+  "Immunofibroblasts" = "Fibroblasts",
+  "SPARC+ COL3A1+ Fibroblasts" = "Fibroblasts",
+  "Capillary pericytes" = "Mural Cells",
+  "Immunopericytes" = "Mural Cells",
+  "VSMC" = "Smooth Muscle Cells",
+  "gd-T cells" = "Immune Cells",
+  "ILCs" = "Immune Cells",
+  "CD16+ NK cells" = "NK Cells",
+  "CD27+ NK cells" = "NK Cells",
+  "CD56+ NK cells" = "NK Cells",
+  "IgA Plasma cells" = "Plasma Cells",
+  "IgG1 Plasma cells" = "Plasma Cells",
+  "IgG3/4 Plasma cells" = "Plasma Cells",
+  "IgM Plasma cells" = "Plasma Cells",
+  "TNF+ Plasma cells" = "Plasma Cells",
+  "Proliferating cells" = "Proliferating Cells"
+))
+rename_map_df <- data.frame(
+  CellType     = names(celltype_rename_map),
+  CellType_new = unname(celltype_rename_map),
+  stringsAsFactors = FALSE
+)
+rename_vec <- function(x, map_df) {
+  x <- gsub("(_[0-9]+)+$", "", x, perl = TRUE)
+  x <- trimws(gsub("[[:space:]\u00A0]+", " ", x, perl = TRUE))
+  idx <- match(x, map_df$CellType)
+  ifelse(is.na(idx), x, map_df$CellType_new[idx])
+}
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells","Melanocytes","Keratinocytes","Endocrine Cells","Smooth Muscle Cells","Plasma Cells")
+diseases_list <- lapply(diseases_list, function(df) {
+  df$source <- rename_vec(df$source, rename_map_df)
+  df$target <- rename_vec(df$target, rename_map_df)
+  df <- df[!(df$source %in% excluded_celltypes | df$target %in% excluded_celltypes), ]
+  df
+})
+
+#3. build interaction column and combine all diseases
+all_data <- dplyr::bind_rows(lapply(names(diseases_list), function(d) {
+  df <- diseases_list[[d]]
+  df$disease <- d
+  df$interaction <- paste(df$ligand.complex, df$receptor.complex, sep = "^")
+  df
+}))
+stopifnot("`interaction` did not survive bind_rows - check the per-disease columns above" = "interaction" %in% names(all_data))
+cat("[checkpoint] all_data columns:", paste(names(all_data), collapse = ", "), "\n")
+cat("[checkpoint] all_data rows:", nrow(all_data), "\n")
+
+#4. find interactions present in at least 2 diseases
+shared_int <- all_data %>%
+  dplyr::group_by(interaction, ligand.complex, receptor.complex) %>%
+  dplyr::summarise(
+    n_diseases     = dplyr::n_distinct(disease),
+    best_magnitude = min(magnitude_rank, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::filter(n_diseases >= 2) %>%
+  dplyr::arrange(dplyr::desc(n_diseases), best_magnitude)
+stopifnot("`interaction` missing from shared_int" = "interaction" %in% names(shared_int))
+cat("[checkpoint] shared_int columns:", paste(names(shared_int), collapse = ", "), "\n")
+cat("Total unique shared interactions:", nrow(shared_int), "\n")
+
+#5. build long format table
+long_int <- all_data %>%
+  dplyr::filter(interaction %in% shared_int$interaction) %>%
+  dplyr::group_by(interaction, ligand.complex, receptor.complex, disease) %>%
+  dplyr::slice_min(order_by = magnitude_rank, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::rename(best_magnitude = magnitude_rank) %>%
+  dplyr::left_join(
+    shared_int %>% dplyr::select(interaction, n_diseases, group_best = best_magnitude),
+    by = "interaction"
+  )
+stopifnot("`interaction` missing after left_join" = "interaction" %in% names(long_int))
+cat("[checkpoint] post-join columns:", paste(names(long_int), collapse = ", "), "\n")
+
+long_int <- long_int %>%
+  # sort by the INTERACTION's overall best score first, so every row belonging
+  # to the same interaction stays grouped together, and within each group,
+  # order diseases by their own strength (best first)
+  dplyr::arrange(dplyr::desc(n_diseases), group_best, interaction, best_magnitude) %>%
+  dplyr::select(interaction, ligand.complex, receptor.complex, n_diseases, best_magnitude,
+                disease, source, target)
+
+#6. blank out repeated ligand/receptor/n_diseases for readability
+interaction_id <- paste(long_int$ligand.complex, long_int$receptor.complex, sep = "_")
+is_duplicate <- duplicated(interaction_id)
+long_int$ligand.complex   <- as.character(long_int$ligand.complex)
+long_int$receptor.complex <- as.character(long_int$receptor.complex)
+long_int$n_diseases       <- as.character(long_int$n_diseases)
+long_int$ligand.complex[is_duplicate]   <- ""
+long_int$receptor.complex[is_duplicate] <- ""
+long_int$n_diseases[is_duplicate]       <- ""
+
+#7. save
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+write.csv(long_int, "CCC/Fusion/output/shared_interactions_between_disease.csv", row.names = FALSE)
+long_int <- read.csv("CCC/Fusion/output/shared_interactions_between_disease.csv")
+  
+   
+  
+
+
+```
+
+
+
+
+
+```{r}
+#plot
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+
+disease_levels <- c("MS","RA","SS","T1D","SjD","IPF.U","IPF.L","SScILD.U","SScILD.L")
+
+#1. fixed color palette per cell type (same categories used across the project)
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+
+#2. keep only interactions present in 8 or 9 of the 9 diseases,
+# capped to the top N by strength (magnitude_rank)
+
+top_n <- 40
+n_per_group <- ceiling(top_n / 2)
+
+shared_all_8_9 <- shared_int %>%
+  filter(n_diseases %in% c(8, 9)) %>%
+  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
+  distinct(lr, .keep_all = TRUE) %>%
+  arrange(best_magnitude)
+
+cat("Total DISTINCT interactions present in 8-9 diseases:", nrow(shared_all_8_9), "\n")
+print(table(shared_all_8_9$n_diseases))
+
+top_9 <- shared_all_8_9 %>% filter(n_diseases == 9) %>% slice_head(n = n_per_group)
+top_8 <- shared_all_8_9 %>% filter(n_diseases == 8) %>% slice_head(n = n_per_group)
+
+shared_8_9 <- bind_rows(top_9, top_8) %>% arrange(desc(n_diseases), best_magnitude)
+
+cat("Keeping", nrow(top_9), "pairs present in all 9 diseases,",
+    nrow(top_8), "pairs present in 8 diseases (", nrow(shared_8_9), "total)\n")
+
+top_lr <- shared_8_9$lr
+stopifnot(!any(duplicated(top_lr)))
+
+
+#3. lr x disease table
+
+lr_disease <- all_data %>%
+  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
+  filter(lr %in% top_lr) %>%
+  group_by(lr, ligand.complex, receptor.complex, disease) %>%
+  slice_min(order_by = magnitude_rank, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(
+    lr      = factor(lr, levels = rev(top_lr)),
+    disease = factor(disease, levels = disease_levels),
+    score   = -log10(magnitude_rank)
+  )
+
+cat("Rows in lr_disease (should be up to", length(top_lr), "LR pairs x 8-9 diseases each):",
+    nrow(lr_disease), "\n")
+
+stopifnot(!any(duplicated(paste(lr_disease$lr, lr_disease$disease))))
+
+# separate dataframes with a common column name for the color mapping
+lr_disease_snd <- lr_disease %>% mutate(celltype = source)
+lr_disease_rcv <- lr_disease %>% mutate(celltype = target)
+
+
+#4. shared size scale for BOTH plots
+
+score_range <- range(lr_disease$score, na.rm = TRUE)
+score_breaks <- seq(score_range[1], score_range[2], length.out = 5)
+magnitude_labels <- signif(10^(-score_breaks), 2)
+
+shared_size_scale <- scale_size(
+  name   = "magnitude_rank\n(smaller = stronger)",
+  range  = c(1, 6),
+  limits = score_range,
+  breaks = score_breaks,
+  labels = as.character(magnitude_labels)
+)
+
+
+#5. Senders dotplot - this is the ONLY plot that shows the Cell type
+# color legend. LR pair labels (y-axis) explicitly set to black.
+
+p_snd <- ggplot(lr_disease_snd, aes(x = disease, y = lr,
+                                     size = score, color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
+  shared_size_scale +
+  guides(size  = guide_legend(order = 1),
+         color = guide_legend(order = 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
+        axis.text.y = element_text(size = 11, face = "bold", color = "black"),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Disease", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Senders")
+
+
+#6. Receivers dotplot - color legend explicitly suppressed (guide="none"),
+# since Senders already shows the identical Cell type legend; y-axis
+# (LR pair) labels moved to the RIGHT side, SAME explicit black color
+# as Senders, so both panels' LR pair text matches exactly
+
+p_rcv <- ggplot(lr_disease_rcv, aes(x = disease, y = lr,
+                                     size = score, color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_cols, limits = names(celltype_cols),
+                      drop = FALSE, guide = "none") +
+  scale_y_discrete(position = "right") +
+  shared_size_scale +
+  guides(size = guide_legend(order = 1)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
+        axis.text.y = element_text(size = 11, face = "bold", color = "black"),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Disease", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Receivers")
+
+
+#7. combine side by side, ONE merged legend
+
+final_plot <- (p_snd | p_rcv) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+
+plot_height <- max(10, length(top_lr) * 0.22)
+cat("Number of LR pairs:", length(top_lr), "| plot height:", plot_height, "inches\n")
+
+ggsave("CCC/Fusion/output/shared_interactions_8_9_diseases.pdf",
+       final_plot, width = 18, height = plot_height, limitsize = FALSE)
+
+
+
+cat("Saved: CCC/Fusion/output/shared_interactions_8_9_diseases.pdf and .png\n")
+
+
+
+
+```
+
+
+
+
+```{r}
+
+#plot
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+disease_levels <- c("MS","RA","SS","T1D","SjD","IPF.U","IPF.L","SScILD.U","SScILD.L")
+#1. fixed color palette per cell type (same categories used across the project)
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+#2. keep only interactions present in 8 or 9 of the 9 diseases,
+# capped to the top N by strength (magnitude_rank)
+top_n <- 15
+n_per_group <- ceiling(top_n / 2)
+shared_all_8_9 <- shared_int %>%
+  filter(n_diseases %in% c(8, 9)) %>%
+  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
+  distinct(lr, .keep_all = TRUE) %>%
+  arrange(best_magnitude)
+cat("Total DISTINCT interactions present in 8-9 diseases:", nrow(shared_all_8_9), "\n")
+print(table(shared_all_8_9$n_diseases))
+top_9 <- shared_all_8_9 %>% filter(n_diseases == 9) %>% slice_head(n = n_per_group)
+top_8 <- shared_all_8_9 %>% filter(n_diseases == 8) %>% slice_head(n = n_per_group)
+shared_8_9 <- bind_rows(top_9, top_8) %>% arrange(desc(n_diseases), best_magnitude)
+cat("Keeping", nrow(top_9), "pairs present in all 9 diseases,",
+    nrow(top_8), "pairs present in 8 diseases (", nrow(shared_8_9), "total)\n")
+top_lr <- shared_8_9$lr
+stopifnot(!any(duplicated(top_lr)))
+#3. lr x disease table
+lr_disease <- all_data %>%
+  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
+  filter(lr %in% top_lr) %>%
+  group_by(lr, ligand.complex, receptor.complex, disease) %>%
+  slice_min(order_by = magnitude_rank, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(
+    lr      = factor(lr, levels = rev(top_lr)),
+    disease = factor(disease, levels = disease_levels),
+    score   = -log10(pmax(magnitude_rank, 1e-300))
+  )
+cat("Rows in lr_disease (should be up to", length(top_lr), "LR pairs x 8-9 diseases each):",
+    nrow(lr_disease), "\n")
+stopifnot(!any(duplicated(paste(lr_disease$lr, lr_disease$disease))))
+# separate dataframes with a common column name for the color mapping
+lr_disease_snd <- lr_disease %>% mutate(celltype = source)
+lr_disease_rcv <- lr_disease %>% mutate(celltype = target)
+#4. shared size scale for BOTH plots
+score_range <- range(lr_disease$score, na.rm = TRUE)
+score_breaks <- seq(score_range[1], score_range[2], length.out = 5)
+magnitude_labels <- signif(10^(-score_breaks), 2)
+shared_size_scale <- scale_size(
+  name   = "magnitude_rank\n(smaller = stronger)",
+  range  = c(1, 6),
+  limits = score_range,
+  breaks = score_breaks,
+  labels = as.character(magnitude_labels)
+)
+#5. Senders dotplot - the Cell type legend is generated by a SEPARATE
+# invisible layer, decoupled from the "score" size aesthetic entirely
+# (see note below), so it can't be broken by size/color interactions in
+# the legend-key rendering. One dummy row per category, placed at an
+# existing x/y so no axis expansion happens, drawn with alpha = 0 so it
+# never appears in the panel - it exists purely to drive the legend.
+dummy_celltype <- data.frame(
+  celltype = factor(names(celltype_cols), levels = names(celltype_cols)),
+  disease  = lr_disease_snd$disease[1],
+  lr       = lr_disease_snd$lr[1]
+)
+p_snd <- ggplot(lr_disease_snd, aes(x = disease, y = lr)) +
+  geom_point(aes(size = score, color = celltype), show.legend = c(size = TRUE, colour = FALSE)) +
+  geom_point(data = dummy_celltype, aes(x = disease, y = lr, color = celltype),
+             size = 5, alpha = 0, inherit.aes = FALSE) +
+  scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
+  shared_size_scale +
+  guides(size  = guide_legend(order = 1),
+         color = guide_legend(order = 2, override.aes = list(alpha = 1, size = 5))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
+        axis.text.y = element_text(size = 11, face = "bold", color = "black"),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Disease", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Senders")
+#6. Receivers dotplot - color legend explicitly suppressed (guide="none"),
+# since Senders already shows the identical Cell type legend; y-axis
+# (LR pair) labels moved to the RIGHT side, SAME explicit black color
+# as Senders, so both panels' LR pair text matches exactly
+p_rcv <- ggplot(lr_disease_rcv, aes(x = disease, y = lr,
+                                     size = score, color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_cols, limits = names(celltype_cols),
+                      drop = FALSE, guide = "none") +
+  scale_y_discrete(position = "right") +
+  shared_size_scale +
+  guides(size = guide_legend(order = 1)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
+        axis.text.y = element_text(size = 11, face = "bold", color = "black"),
+        axis.title = element_text(size = 12, face = "bold")) +
+  labs(x = "Disease", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Receivers")
+#7. combine side by side, ONE merged legend
+final_plot <- (p_snd | p_rcv) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+plot_height <- max(10, length(top_lr) * 0.22)
+cat("Number of LR pairs:", length(top_lr), "| plot height:", plot_height, "inches\n")
+ggsave("CCC/Fusion/output/shared_interactions_8_9_diseases.pdf",
+       final_plot, width = 18, height = plot_height, limitsize = FALSE)
+
+
+```
+
+
+
+
+
+
+
+
+##10.1 upset plot of shared interactions
+```{r}
+
+
+library(UpSetR)
+
+#1. build interaction_list: one set of unique interactions per disease
+
+interaction_list <- lapply(split(all_data$interaction, all_data$disease), unique)
+
+cat("Interactions per disease:\n")
+print(sapply(interaction_list, length))
+
+
+#2. upset plot with all intersect combinations
+pdf("CCC/Fusion/output/upset_plot_shared_interactions.pdf", 
+    width = 20, height = 13,
+    onefile = FALSE)
+
+upset(
+  fromList(interaction_list),
+  nsets             = length(interaction_list),
+  nintersects       = 30,
+  order.by          = "freq",
+  mb.ratio          = c(0.5, 0.5),
+  text.scale        = c(1.8, 1.4, 1.4, 1.2, 1.5, 1.3),
+  point.size        = 3.5,
+  line.size         = 1.2,
+  main.bar.color    = "#993404",
+  sets.bar.color    = "#2c7fb8",
+  matrix.color      = "black",
+  shade.color       = "grey85",
+  set_size.show     = TRUE,
+  set_size.scale_max = max(sapply(interaction_list, length)) * 1.15
+)
+
+dev.off()
+
+
+
+
+```
+
+
+
+
+
+
+##11 GRN between diseases-:
+
+##11.1compare regulons, shared and unique
+
+
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+#1. load RSS files per disease
+rss_MS       <- read.csv("GRN_SCENIC/MS/output/rss_cellType.csv")
+rss_RA       <- read.csv("GRN_SCENIC/RA/output/rss_cellType.csv")
+rss_SS       <- read.csv("GRN_SCENIC/SS/output/rss_cellType.csv")
+rss_T1D      <- read.csv("GRN_SCENIC/T1D/output/rss_cellType.csv")
+rss_SjD      <- read.csv("GRN_SCENIC/SjD/output/rss_cellType.csv")
+rss_IPF.U    <- read.csv("GRN_SCENIC/IPF/Upper/output/rss_cellType.csv")
+rss_IPF.L    <- read.csv("GRN_SCENIC/IPF/Low/output/rss_cellType.csv")
+rss_SScILD.U <- read.csv("GRN_SCENIC/SScILD/Upper/output/rss_cellType.csv")
+rss_SScILD.L <- read.csv("GRN_SCENIC/SScILD/Low/output/rss_cellType.csv")
+#2. clean TF column names (pySCENIC "(+)" becomes "..." when read into R)
+clean_tf_names <- function(df) {
+  names(df) <- gsub("\\.+$", "", names(df))
+  names(df)[1] <- "CellType"
+  df
+}
+rss_list <- list(
+  MS           = clean_tf_names(rss_MS),
+  RA           = clean_tf_names(rss_RA),
+  SS           = clean_tf_names(rss_SS),
+  T1D          = clean_tf_names(rss_T1D),
+  SjD          = clean_tf_names(rss_SjD),
+  IPF.Upper    = clean_tf_names(rss_IPF.U),
+  IPF.Low      = clean_tf_names(rss_IPF.L),
+  SScILD.Upper = clean_tf_names(rss_SScILD.U),
+  SScILD.Low   = clean_tf_names(rss_SScILD.L)
+)
+#3. rename cell types to standardized categories
+celltype_rename_map <- c(
+  # --- Neural / glial (MS) ---
+  "Astrocytes"                = "Glial Cells",
+  "Oligodendrocytes"          = "Glial Cells",
+  "OPC"                       = "Glial Cells",
+  "Schwann Cells"             = "Glial Cells",
+  "Neurons"                   = "Neurons",
+  # --- Endothelial subtypes -> Endothelial Cells ---
+  "Endothelial Cells"         = "Endothelial Cells",
+  "Arterial Endothelial"      = "Endothelial Cells",
+  "Venous Endothelial"        = "Endothelial Cells",
+  "Lymphatic Endothelial"     = "Endothelial Cells",
+  "Capillary Endothelial"     = "Endothelial Cells",
+  "Peribronchial Endothelial" = "Endothelial Cells",
+  # --- Myeloid subtypes -> Mono/Mac ---
+  "Macrophages"                = "Mono/Mac",
+  "Monocytes"                  = "Mono/Mac",
+  "Myeloid Cells"              = "Mono/Mac",
+  "Mono/Mac"                   = "Mono/Mac",
+  "Dendritic Cells"            = "Mono/Mac",
+  "Plasmacytoid Dendritic"     = "Mono/Mac",
+  "Microglia"                  = "Mono/Mac",
+  # --- Epithelial subtypes -> Epithelial Cells ---
+  "Alveolar Cells"             = "Epithelial Cells",
+  "Ciliated Cells"             = "Epithelial Cells",
+  "Goblet Cells"                = "Epithelial Cells",
+  "Basal Cells"                 = "Epithelial Cells",
+  "Secretory Cells"             = "Epithelial Cells",
+  "Acinar Cells"                = "Epithelial Cells",
+  "Ductal Cells"                = "Epithelial Cells",
+  # --- Keratinocyte subtypes ---
+  "Basal Keratinocyte"          = "Keratinocytes",
+  "Suprabasal Keratinocyte"     = "Keratinocytes",
+  # --- Endocrine (pancreas) ---
+  "Alpha Cells"                  = "Endocrine Cells",
+  "Delta Cells"                  = "Endocrine Cells",
+  # match
+  "CD4"                  = "CD4",
+  "CD8"                  = "CD8",
+  "B Cells"              = "B Cells",
+  "Fibroblasts"          = "Fibroblasts",
+  "Mast Cells"           = "Mast Cells",
+  "Melanocytes"          = "Melanocytes",
+  "Mural Cells"          = "Mural Cells",
+  "Smooth Muscle Cells"  = "Smooth Muscle Cells",
+  "Immune Cells"         = "Immune Cells",
+  "NK Cells"             = "NK Cells",
+  "Plasma Cells"         = "Plasma Cells",
+  "Proliferating Cells"  = "Proliferating Cells"
+)
+rename_map_df <- data.frame(
+  CellType     = names(celltype_rename_map),
+  CellType_new = unname(celltype_rename_map),
+  stringsAsFactors = FALSE
+)
+rename_celltypes <- function(df, map_df) {
+  df$CellType <- trimws(gsub("[[:space:]\u00A0]+", " ", df$CellType, perl = TRUE))
+  idx <- match(df$CellType, map_df$CellType)
+  df$CellType <- ifelse(is.na(idx), df$CellType, map_df$CellType_new[idx])
+  df
+}
+rss_list <- lapply(rss_list, rename_celltypes, map_df = rename_map_df)
+#4. combine all diseases into one long table: CellType, TF, RSS, disease
+rss_combined <- dplyr::bind_rows(lapply(names(rss_list), function(d) {
+  df <- rss_list[[d]]
+  df_long <- df %>% tidyr::pivot_longer(-CellType, names_to = "TF", values_to = "RSS")
+  df_long$disease <- d
+  df_long
+}))
+stopifnot("`TF` missing from rss_combined right after pivot_longer" = "TF" %in% names(rss_combined))
+cat("[checkpoint] rss_combined columns:", paste(names(rss_combined), collapse = ", "), "\n")
+cat("rss_combined built with", nrow(rss_combined), "rows\n")
+#5. for each TF in each disease, keep only the top cell type (highest RSS score)
+# RSS = Regulon Specificity Score: tells us how exclusively a TF's activity
+# is concentrated in one cell type vs spread across all cell types
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells","Melanocytes","Keratinocytes","Endocrine Cells","Smooth Muscle Cells","Plasma Cells")
+dominant_celltype_per_TF_disease <- rss_combined %>%
+  dplyr::filter(!CellType %in% excluded_celltypes) %>%
+  dplyr::group_by(disease, TF) %>%
+  dplyr::slice_max(order_by = RSS, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(TF, disease, CellType, RSS)
+stopifnot("`TF` missing from dominant_celltype_per_TF_disease" = "TF" %in% names(dominant_celltype_per_TF_disease))
+cat("[checkpoint] dominant_celltype_per_TF_disease columns:", paste(names(dominant_celltype_per_TF_disease), collapse = ", "), "\n")
+#6. figure out which diseases each TF is present in
+# (a TF is "present" in a disease if it appears in that disease's RSS file,
+#  regardless of which cell type ended up as its dominant one)
+diseases_per_TF <- dominant_celltype_per_TF_disease %>%
+  dplyr::group_by(TF) %>%
+  dplyr::summarise(
+    n_diseases = dplyr::n_distinct(disease),
+    diseases   = paste(sort(unique(disease)), collapse = ", "),
+    .groups = "drop"
+  )
+stopifnot("`TF` missing from diseases_per_TF" = "TF" %in% names(diseases_per_TF))
+cat("[checkpoint] diseases_per_TF columns:", paste(names(diseases_per_TF), collapse = ", "), "\n")
+#7. for each TF, get its best (highest) RSS score across all diseases it appears in
+best_rss_per_TF <- dominant_celltype_per_TF_disease %>%
+  dplyr::group_by(TF) %>%
+  dplyr::slice_max(order_by = RSS, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(TF, best_disease = disease, Best_RSS = RSS)
+stopifnot("`TF` missing from best_rss_per_TF" = "TF" %in% names(best_rss_per_TF))
+cat("[checkpoint] best_rss_per_TF columns:", paste(names(best_rss_per_TF), collapse = ", "), "\n")
+tf_summary <- diseases_per_TF %>%
+  dplyr::left_join(best_rss_per_TF, by = "TF")
+cat("[checkpoint] tf_summary columns:", paste(names(tf_summary), collapse = ", "), "\n")
+#8. split into shared (>=2 diseases) vs unique (1 disease only)
+shared_final <- tf_summary %>%
+  dplyr::filter(n_diseases >= 2) %>%
+  dplyr::transmute(TF, Diseases = diseases, Best_RSS = round(Best_RSS, 2)) %>%
+  dplyr::arrange(TF)
+unique_final <- tf_summary %>%
+  dplyr::filter(n_diseases == 1) %>%
+  dplyr::transmute(TF, Disease = diseases, Best_RSS = round(Best_RSS, 2)) %>%
+  dplyr::arrange(TF)
+cat("shared_final built with", nrow(shared_final), "rows\n")
+cat("unique_final built with", nrow(unique_final), "rows\n")
+#9. combine cell type and score into one text value per disease, e.g. "CD4: 0.90"
+celltype_score_combined <- dominant_celltype_per_TF_disease %>%
+  dplyr::mutate(CellType_Score = paste0(CellType, ": ", round(RSS, 2))) %>%
+  dplyr::select(TF, disease, CellType_Score) %>%
+  tidyr::pivot_wider(names_from = disease, values_from = CellType_Score)
+#10. merge with the shared and unique TF tables
+final_table_shared <- shared_final %>%
+  dplyr::left_join(celltype_score_combined, by = "TF")
+final_table_unique <- unique_final %>%
+  dplyr::left_join(celltype_score_combined, by = "TF")
+cat("Shared regulons table rows:", nrow(final_table_shared), "\n")
+cat("Unique regulons table rows:", nrow(final_table_unique), "\n")
+#11. save both tables
+dir.create("output/Fusion", recursive = TRUE, showWarnings = FALSE)
+write.csv(final_table_shared, "output/Fusion/shared_regulons_dominant_celltype.csv",
+          row.names = FALSE)
+write.csv(final_table_unique, "output/Fusion/unique_regulons_dominant_celltype.csv",
+          row.names = FALSE)
+final_table_unique <- read.csv("output/Fusion/unique_regulons_dominant_celltype.csv")
+final_table_shared <- read.csv("output/Fusion/shared_regulons_dominant_celltype.csv")
+
+
+```
+
+
+```{r}
+##plot
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+# keep only the top 40 TFs by Best_RSS, then sort so regulons present in
+# ALL diseases come first, Best_RSS as tiebreaker
+top_n <- 40
+final_table_top <- final_table_shared %>%
+  arrange(desc(Best_RSS)) %>%
+  slice_head(n = top_n) %>%
+  mutate(n_diseases = lengths(strsplit(Diseases, ",\\s*"))) %>%
+  arrange(desc(n_diseases), desc(Best_RSS))
+
+# rename columns
+names(final_table_top)[names(final_table_top) == "IPF.Upper"]    <- "IPF.U"
+names(final_table_top)[names(final_table_top) == "IPF.Low"]      <- "IPF.L"
+names(final_table_top)[names(final_table_top) == "SScILD.Upper"] <- "SScILD.U"
+names(final_table_top)[names(final_table_top) == "SScILD.Low"]   <- "SScILD.L"
+
+disease_cols <- c("MS","RA","SS","T1D","SjD","IPF.U","IPF.L",
+                   "SScILD.U","SScILD.L")
+
+# parse "CellType: Score" text into separate cell type and score matrices
+parse_celltype <- function(x) {
+  sapply(strsplit(x, ": "), function(v) if (length(v) == 2) v[1] else NA)
+}
+parse_score <- function(x) {
+  sapply(strsplit(x, ": "), function(v) if (length(v) == 2) as.numeric(v[2]) else NA)
+}
+
+markers_present <- final_table_top$TF
+dom_ct_mat <- matrix(NA, nrow = length(markers_present), ncol = length(disease_cols),
+                      dimnames = list(markers_present, disease_cols))
+score_mat  <- matrix(NA, nrow = length(markers_present), ncol = length(disease_cols),
+                      dimnames = list(markers_present, disease_cols))
+
+for (dcol in disease_cols) {
+  dom_ct_mat[, dcol] <- parse_celltype(final_table_top[[dcol]])
+  score_mat[, dcol]  <- parse_score(final_table_top[[dcol]])
+}
+
+# fixed color per cell type (Glial Cells, Neurons, Immune Cells excluded already)
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+# defensive: strip backticks, newlines, and stray whitespace in case any
+# survived a copy/paste - this is what caused "invalid color name '\n#E31A1C'"
+celltype_cols <- trimws(gsub("[`\r\n]", "", celltype_cols))
+names(celltype_cols) <- c("B Cells","CD4","CD8","NK Cells","Mono/Mac",
+                           "Mast Cells","Proliferating Cells","Endothelial Cells",
+                           "Fibroblasts","Mural Cells","Epithelial Cells")
+
+stopifnot(all(grepl("^(#[0-9A-Fa-f]{6}|[a-zA-Z]+[0-9]*)$", celltype_cols)))
+
+# matrix used only for clustering (missing values treated as 0)
+cluster_mat <- score_mat
+cluster_mat[is.na(cluster_mat)] <- 0
+
+# only keep cell types actually present, for a clean legend
+present_celltypes <- intersect(names(celltype_cols), unique(na.omit(as.vector(dom_ct_mat))))
+
+# draw bubbles - solid color, no border, size scaled to RSS score
+# where the TF is ABSENT for a disease (NA), draw a small grey "x" instead
+# of leaving the cell completely blank, so absence is visually explicit
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  ct <- dom_ct_mat[i, j]
+  if (is.na(ct)) {
+    grid::grid.text(
+      "x", x = x, y = y,
+      gp = grid::gpar(col = "grey60", fontsize = 9, fontface = "bold")
+    )
+    return(invisible(NULL))
+  }
+  sc <- score_mat[i, j]
+  grid::grid.circle(
+    x = x, y = y,
+    r = sc * 0.42 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = celltype_cols[ct], col = celltype_cols[ct])
+  )
+}
+
+# heatmap sized to fit exactly the number of rows/columns, avoiding empty space
+ht <- Heatmap(
+  cluster_mat,
+  name = "blank",
+  col = colorRamp2(c(0, 1), c("white", "white")),
+  rect_gp = gpar(type = "none"),
+  cell_fun = cell_fun,
+  show_heatmap_legend = FALSE,
+  row_names_gp = gpar(fontsize = 9, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  clustering_distance_rows = "euclidean",
+  clustering_distance_columns = "euclidean",
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  show_row_dend = TRUE,
+  show_column_dend = TRUE,
+  row_dend_width = unit(10, "mm"),
+  column_dend_height = unit(8, "mm"),
+  row_gap = unit(0.5, "mm"),
+  width = unit(ncol(cluster_mat) * 9, "mm"),
+  height = unit(nrow(cluster_mat) * 5, "mm")
+)
+
+# cell type legend (only cell types actually shown)
+lgd_celltype <- Legend(
+  labels = present_celltypes,
+  legend_gp = gpar(fill = celltype_cols[present_celltypes]),
+  title = "Dominant cell type",
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+# size legend for RSS score
+size_breaks <- c(0.2, 0.4, 0.6, 0.8, 1.0)
+lgd_size <- Legend(
+  labels = as.character(size_breaks),
+  title = "RSS score",
+  type = "points",
+  pch = 16,
+  size = unit(size_breaks * 0.42 * 4, "mm"),
+  legend_gp = gpar(col = "grey40", fill = "grey70"),
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+# legend entry explaining the "x" symbol
+lgd_absent <- Legend(
+  labels = "Not present",
+  type = "points",
+  pch = 4,
+  legend_gp = gpar(col = "grey60", fontsize = 9),
+  title = "",
+  labels_gp = gpar(fontsize = 9)
+)
+
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size, lgd_absent),
+     heatmap_legend_side = "right", annotation_legend_side = "right")
+
+# save, sized to match the actual data (top 40 rows, 9 disease columns)
+plot_w <- 9
+plot_h <- max(8, top_n * 0.22)
+
+pdf("output/Fusion/shared_regulons_top40.pdf", width = plot_w, height = plot_h)
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size, lgd_absent),
+     heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size, lgd_absent),
+     heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+
+```
+
+
+
+
+## GRN and TLS genes:##LOOK IF THE SHARED TF have TARGET that belong to the TLS genes list
+
+```{r}
+#1.⁠ ⁠count for each TF the number of targets it has from the TLS list
+
+#look for TF and their target in each disease
+library(dplyr)
+library(purrr)
+library(tidyr)
+
+parse_target_genes <- function(x) {
+  if (is.na(x) || x == "") return(character(0))
+  m <- gregexpr("(?<=\\(')[^']+(?=')", x, perl = TRUE)
+  regmatches(x, m)[[1]]
+}
+
+load_disease_regulons <- function(folder_parts, label) {
+  path <- file.path("GRN_SCENIC", do.call(file.path, as.list(folder_parts)),
+                     "output", "regulons.csv")
+  df <- read.csv(path, skip = 1, header = TRUE)
+  names(df)[1:2] <- c("TF", "MotifID")
+  df %>%
+    dplyr::filter(TargetGenes != "") %>%
+    dplyr::transmute(TF, target = purrr::map(TargetGenes, parse_target_genes)) %>%
+    tidyr::unnest(target) %>%
+    dplyr::distinct(TF, target) %>%
+    dplyr::mutate(disease = label)
+}
+
+disease_paths <- list(
+  MS           = "MS",
+  RA           = "RA",
+  SS           = "SS",
+  T1D          = "T1D",
+  SjD          = "SjD",
+  IPF.U        = c("IPF", "Upper"),
+  IPF.L        = c("IPF", "Low"),
+  SScILD.U     = c("SScILD", "Upper"),
+  SScILD.L     = c("SScILD", "Low")
+)
+
+regulon_list <- list()
+for (label in names(disease_paths)) {
+  cat("loading:", label, "... ")
+  result <- tryCatch(load_disease_regulons(disease_paths[[label]], label),
+                      error = function(e) e)
+  if (inherits(result, "error")) {
+    cat("FAILED -", conditionMessage(result), "\n")
+  } else {
+    cat("ok,", nrow(result), "rows\n")
+    regulon_list[[label]] <- result
+  }
+}
+regulon_long <- dplyr::bind_rows(regulon_list)
+cat("\ntotal rows:", nrow(regulon_long), "\n")
+cat("diseases loaded:", paste(unique(regulon_long$disease), collapse = ", "), "\n")
+
+## LOOK IF THE SHARED TF have TARGET that belong to the TLS genes list
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(stringr)
+
+final_table_shared <- read.csv("output/Fusion/shared_regulons_dominant_celltype.csv")
+
+core_threshold <- 6
+tf_disease_counts <- regulon_long %>%
+  dplyr::distinct(TF, disease) %>%
+  dplyr::count(TF, name = "n_diseases")
+core_tfs <- tf_disease_counts %>%
+  dplyr::filter(n_diseases >= core_threshold) %>%
+  dplyr::pull(TF)
+cat("core_tfs (>=", core_threshold, "diseases, from regulon_long):", length(core_tfs), "TFs\n")
+
+disease_cols <- c("IPF.Low", "IPF.Upper", "MS", "RA", "SS",
+                   "SScILD.Low", "SScILD.Upper", "SjD", "T1D")
+celltype_long <- final_table_shared %>%
+  tidyr::pivot_longer(cols = dplyr::all_of(disease_cols),
+                       names_to = "disease", values_to = "cell_rss") %>%
+  dplyr::filter(!is.na(cell_rss), cell_rss != "") %>%
+  dplyr::mutate(
+    CellType = stringr::str_extract(cell_rss, "^[^:]+"),
+    RSS      = as.numeric(stringr::str_extract(cell_rss, "[0-9.]+$"))
+  ) %>%
+  dplyr::select(TF, disease, CellType, RSS)
+
+dominant_celltype_per_TF <- celltype_long %>%
+  dplyr::group_by(TF) %>%
+  dplyr::slice_max(order_by = RSS, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(TF, dominant_celltype = CellType, dominant_RSS = RSS)
+cat("dominant cell type recovered for", nrow(dominant_celltype_per_TF), "TFs\n")
+
+stopifnot("regulon_long not found - run the loader first" = exists("regulon_long"))
+
+#1. TLS marker groups
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+                      "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+                   "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+                   "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12",
+                          "CXCR5", "CCR7", "CXCR4")
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+marker_groups <- list(
+  germinal_center      = germinal_center,
+  inflammation         = inflammation,
+  lymphoid_chemokines  = lymphoid_chemokines,
+  hev                  = hev,
+  fdc                  = fdc
+)
+
+tls_genes_long <- purrr::imap_dfr(
+  marker_groups,
+  ~ data.frame(category = .y, gene = .x)
+)
+
+#2. restrict the regulon data to the shared/core TFs only
+regulon_core <- regulon_long %>%
+  dplyr::filter(TF %in% core_tfs)
+
+#3. overlap: which TLS genes are targets of a shared TF, and in which disease(s)
+tf_gene_overlap <- regulon_core %>%
+  dplyr::inner_join(tls_genes_long, by = c("target" = "gene"),
+                     relationship = "many-to-many") %>%
+  dplyr::distinct(TF, category, target, disease) %>%
+  dplyr::arrange(category, TF, target) %>%
+  dplyr::left_join(dominant_celltype_per_TF, by = "TF")
+
+cat("Matches (shared TF -> TLS gene, per disease, with dominant cell type):\n")
+print(tf_gene_overlap)
+cat("\nRows per disease (sanity check - should be non-zero for all 9):\n")
+print(tf_gene_overlap %>% dplyr::count(disease))
+
+#4. count, per TF, how many distinct TLS genes it regulates
+tf_tls_target_counts <- tf_gene_overlap %>%
+  dplyr::distinct(TF, target) %>%
+  dplyr::count(TF, name = "n_tls_targets")
+
+#5. final single output: one row per (TF, category, target), with the
+# TF's dominant cell type/RSS and its total TLS-target count attached
+tf_tls_full_table <- tf_gene_overlap %>%
+  dplyr::distinct(TF, category, target, dominant_celltype, dominant_RSS) %>%
+  dplyr::left_join(tf_tls_target_counts, by = "TF") %>%
+  dplyr::arrange(dplyr::desc(n_tls_targets), TF, category, target)
+
+cat("\nPreview of final table:\n")
+print(head(tf_tls_full_table, 20))
+
+write.csv(tf_tls_full_table, "GRN_SCENIC/TF_TLS_targets_by_category_celltype.csv", row.names = FALSE)
+
+
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+tf_disease_tls_counts <- tf_gene_overlap %>%
+  dplyr::distinct(TF, target, disease) %>%
+  dplyr::count(TF, disease, name = "n_tls_targets_in_disease")
+
+top_n_tf <- 30
+top_tfs <- tf_tls_target_counts %>%
+  dplyr::arrange(dplyr::desc(n_tls_targets)) %>%
+  dplyr::slice_head(n = top_n_tf) %>%
+  dplyr::pull(TF)
+
+disease_levels <- c("MS", "RA", "SS", "T1D", "SjD",
+                     "IPF.U", "IPF.L", "SScILD.U", "SScILD.L")
+
+heatmap_data <- tf_disease_tls_counts %>%
+  dplyr::filter(TF %in% top_tfs) %>%
+  tidyr::complete(TF = top_tfs, disease = disease_levels,
+                   fill = list(n_tls_targets_in_disease = 0))
+
+mat_df <- heatmap_data %>%
+  tidyr::pivot_wider(names_from = disease, values_from = n_tls_targets_in_disease)
+
+mat <- as.data.frame(mat_df)
+rownames(mat) <- mat$TF
+mat$TF <- NULL
+mat <- as.matrix(mat)
+mat <- mat[top_tfs, disease_levels]
+
+col_fun <- circlize::colorRamp2(c(0, max(mat)), c("white", "#08519C"))
+
+# cell_fun draws the actual count number in every cell, on top of the
+# color fill - guaranteed to show regardless of pheatmap-translation quirks
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  grid::grid.text(mat[i, j], x, y, gp = grid::gpar(fontsize = 9,
+                   col = ifelse(mat[i, j] > max(mat) * 0.5, "white", "black")))
+}
+
+ht <- Heatmap(
+  mat,
+  name = "Count",
+  col = col_fun,
+  cell_fun = cell_fun,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_row_dend = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 10),
+  column_names_gp = gpar(fontsize = 11),
+  column_names_rot = 45,
+  border = TRUE
+)
+
+pdf("GRN_SCENIC/TF_TLS_count_heatmap.pdf", width = 10, height = 12)
+draw(ht)
+dev.off()
+
+
+```
+
+
+
+```{r}
+
+#look for TF and their target in each disease
+library(dplyr)
+library(purrr)
+library(tidyr)
+
+parse_target_genes <- function(x) {
+  if (is.na(x) || x == "") return(character(0))
+  m <- gregexpr("(?<=\\(')[^']+(?=')", x, perl = TRUE)
+  regmatches(x, m)[[1]]
+}
+
+load_disease_regulons <- function(folder_parts, label) {
+  path <- file.path("GRN_SCENIC", do.call(file.path, as.list(folder_parts)),
+                     "output", "regulons.csv")
+  df <- read.csv(path, skip = 1, header = TRUE)
+  names(df)[1:2] <- c("TF", "MotifID")
+  df %>%
+    dplyr::filter(TargetGenes != "") %>%
+    dplyr::transmute(TF, target = purrr::map(TargetGenes, parse_target_genes)) %>%
+    tidyr::unnest(target) %>%
+    dplyr::distinct(TF, target) %>%
+    dplyr::mutate(disease = label)
+}
+
+disease_paths <- list(
+  MS           = "MS",
+  RA           = "RA",
+  SS           = "SS",
+  T1D          = "T1D",
+  SjD          = "SjD",
+  IPF.U        = c("IPF", "Upper"),
+  IPF.L        = c("IPF", "Low"),
+  SScILD.U     = c("SScILD", "Upper"),
+  SScILD.L     = c("SScILD", "Low")
+)
+
+regulon_list <- list()
+for (label in names(disease_paths)) {
+  cat("loading:", label, "... ")
+  result <- tryCatch(load_disease_regulons(disease_paths[[label]], label),
+                      error = function(e) e)
+  if (inherits(result, "error")) {
+    cat("FAILED -", conditionMessage(result), "\n")
+  } else {
+    cat("ok,", nrow(result), "rows\n")
+    regulon_list[[label]] <- result
+  }
+}
+regulon_long <- dplyr::bind_rows(regulon_list)
+cat("\ntotal rows:", nrow(regulon_long), "\n")
+cat("diseases loaded:", paste(unique(regulon_long$disease), collapse = ", "), "\n")
+
+## LOOK IF THE SHARED TF have TARGET that belong to the TLS genes list
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(stringr)
+
+final_table_shared <- read.csv("output/Fusion/shared_regulons_dominant_celltype.csv")
+
+core_threshold <- 6
+tf_disease_counts <- regulon_long %>%
+  dplyr::distinct(TF, disease) %>%
+  dplyr::count(TF, name = "n_diseases")
+core_tfs <- tf_disease_counts %>%
+  dplyr::filter(n_diseases >= core_threshold) %>%
+  dplyr::pull(TF)
+cat("core_tfs (>=", core_threshold, "diseases, from regulon_long):", length(core_tfs), "TFs\n")
+
+disease_cols <- c("IPF.Low", "IPF.Upper", "MS", "RA", "SS",
+                   "SScILD.Low", "SScILD.Upper", "SjD", "T1D")
+celltype_long <- final_table_shared %>%
+  tidyr::pivot_longer(cols = dplyr::all_of(disease_cols),
+                       names_to = "disease", values_to = "cell_rss") %>%
+  dplyr::filter(!is.na(cell_rss), cell_rss != "") %>%
+  dplyr::mutate(
+    CellType = stringr::str_extract(cell_rss, "^[^:]+"),
+    RSS      = as.numeric(stringr::str_extract(cell_rss, "[0-9.]+$"))
+  ) %>%
+  dplyr::select(TF, disease, CellType, RSS) %>%
+  # FIX (must stay - this is the pulmonary-diseases-missing bug):
+  # relabel to match the short disease codes used everywhere else
+  # (regulon_long, tf_gene_overlap). Without this, the plot's final
+  # left_join silently fails for IPF.U/IPF.L/SScILD.U/SScILD.L,
+  # producing NA RSS values that ggplot then drops as invisible points
+  dplyr::mutate(disease = dplyr::case_when(
+    disease == "IPF.Upper"    ~ "IPF.U",
+    disease == "IPF.Low"      ~ "IPF.L",
+    disease == "SScILD.Upper" ~ "SScILD.U",
+    disease == "SScILD.Low"   ~ "SScILD.L",
+    TRUE ~ disease
+  ))
+
+dominant_celltype_per_TF <- celltype_long %>%
+  dplyr::group_by(TF) %>%
+  dplyr::slice_max(order_by = RSS, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(TF, dominant_celltype = CellType, dominant_RSS = RSS)
+cat("dominant cell type recovered for", nrow(dominant_celltype_per_TF), "TFs\n")
+
+stopifnot("regulon_long not found - run the loader first" = exists("regulon_long"))
+
+#1. TLS marker groups
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+                      "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+                   "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+                   "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12",
+                          "CXCR5", "CCR7", "CXCR4")
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+marker_groups <- list(
+  germinal_center      = germinal_center,
+  inflammation         = inflammation,
+  lymphoid_chemokines  = lymphoid_chemokines,
+  hev                  = hev,
+  fdc                  = fdc
+)
+
+tls_genes_long <- purrr::imap_dfr(
+  marker_groups,
+  ~ data.frame(category = .y, gene = .x)
+)
+
+#2. restrict the regulon data to the shared/core TFs only
+regulon_core <- regulon_long %>%
+  dplyr::filter(TF %in% core_tfs)
+
+#3. overlap: which TLS genes are targets of a shared TF, and in which disease(s)
+tf_gene_overlap <- regulon_core %>%
+  dplyr::inner_join(tls_genes_long, by = c("target" = "gene"),
+                     relationship = "many-to-many") %>%
+  dplyr::distinct(TF, category, target, disease) %>%
+  dplyr::arrange(category, TF, target) %>%
+  dplyr::left_join(dominant_celltype_per_TF, by = "TF")
+
+cat("Rows per disease (sanity check - should be non-zero for all 9):\n")
+print(tf_gene_overlap %>% dplyr::count(disease))
+
+#4. count, per TF, how many distinct TLS genes it regulates
+tf_tls_target_counts <- tf_gene_overlap %>%
+  dplyr::distinct(TF, target) %>%
+  dplyr::count(TF, name = "n_tls_targets")
+
+#5. top 10 TFs by number of distinct TLS targets
+top_n_tf <- 10
+top10_tfs <- tf_tls_target_counts %>%
+  dplyr::arrange(dplyr::desc(n_tls_targets)) %>%
+  dplyr::slice_head(n = top_n_tf) %>%
+  dplyr::pull(TF)
+cat("\nTop", top_n_tf, "TFs by number of TLS targets:\n")
+print(top10_tfs)
+
+#6. for these 10 TFs, which TLS genes do they regulate
+top10_tls_overlap <- tf_gene_overlap %>%
+  dplyr::filter(TF %in% top10_tfs) %>%
+  dplyr::arrange(category, TF, target)
+
+#7. top 5 genes per category, by how many of these 10 TFs regulate each gene
+top_n_gene <- 5
+gene_tf_counts <- top10_tls_overlap %>%
+  dplyr::distinct(TF, category, target) %>%
+  dplyr::count(category, target, name = "n_tfs_targeting")
+
+top5_genes_per_category <- gene_tf_counts %>%
+  dplyr::group_by(category) %>%
+  dplyr::slice_max(order_by = n_tfs_targeting, n = top_n_gene, with_ties = FALSE) %>%
+  dplyr::ungroup()
+cat("\nTop", top_n_gene, "genes per category:\n")
+print(top5_genes_per_category)
+
+#8. final plotting table
+plot_data <- top10_tls_overlap %>%
+  dplyr::inner_join(top5_genes_per_category %>% dplyr::select(category, target),
+                     by = c("category", "target")) %>%
+  dplyr::distinct(TF, category, target, disease) %>%
+  dplyr::left_join(celltype_long %>% dplyr::select(TF, disease, CellType, RSS),
+                    by = c("TF", "disease")) %>%
+  dplyr::rename(RSS_in_disease = RSS, CellType_in_disease = CellType)
+
+cat("\nRows per disease in plot_data (should be non-zero for all 9, including pulmonary ones):\n")
+print(plot_data %>% dplyr::count(disease))
+
+plot_data$TF <- factor(plot_data$TF, levels = top10_tfs)
+
+disease_levels <- c("MS", "RA", "SS", "T1D", "SjD",
+                     "IPF.U", "IPF.L", "SScILD.U", "SScILD.L")
+plot_data$disease <- factor(plot_data$disease, levels = disease_levels)
+plot_data$RSS_in_disease <- pmin(pmax(plot_data$RSS_in_disease, 0), 1)
+
+#9. plot
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+dummy_celltype <- data.frame(
+  TF                  = plot_data$TF[1],
+  target              = plot_data$target[1],
+  category            = plot_data$category[1],
+  disease             = plot_data$disease[1],
+  CellType_in_disease = factor(names(celltype_cols), levels = names(celltype_cols))
+)
+
+p_final <- ggplot(plot_data, aes(x = TF, y = target)) +
+  geom_point(aes(size = RSS_in_disease, color = CellType_in_disease),
+             show.legend = c(size = TRUE, colour = FALSE)) +
+  geom_point(data = dummy_celltype,
+             aes(x = TF, y = target, color = CellType_in_disease),
+             size = 5, alpha = 0, inherit.aes = FALSE) +
+  facet_grid(category ~ disease, scales = "free_y", space = "free_y", switch = "y") +
+  scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
+  scale_size_continuous(
+    name   = "RSS",
+    range  = c(1.5, 6),
+    breaks = c(0.2, 0.4, 0.6, 0.8, 1.0),
+    limits = c(0, 1)
+  ) +
+  guides(
+    size  = guide_legend(order = 1),
+    color = guide_legend(order = 2, override.aes = list(alpha = 1, size = 5))
+  ) +
+  labs(x = "Transcription Factor", y = "Target Gene", color = "Cell type") +
+  theme_bw(base_size = 9) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    panel.grid.minor = element_blank(),
+    strip.placement = "outside",
+    strip.text.x = element_text(size = 14, face = "bold"),
+    strip.text.y.left = element_text(angle = 0, size = 14, face = "bold")
+  )
+
+ggsave("GRN_SCENIC/TF_TLS_top10_by_targetcount_plot.pdf", p_final, width = 25, height = 12)
+cat("\nplot saved to GRN_SCENIC/TF_TLS_top10_by_targetcount_plot.pdf\n")
+
+```
+
+
+
+
+
+##11.2 heatmap of shared regulons pairwise
+
+
+```{r}
+
+library(pheatmap)
+library(dplyr)
+
+
+
+tf_list <- lapply(rss_list, function(df) setdiff(names(df), "CellType"))
+
+# rename to short .U / .L naming
+names(tf_list)[names(tf_list) == "IPF.Upper"]    <- "IPF.U"
+names(tf_list)[names(tf_list) == "IPF.Low"]      <- "IPF.L"
+names(tf_list)[names(tf_list) == "SScILD.Upper"] <- "SScILD.U"
+names(tf_list)[names(tf_list) == "SScILD.Low"]   <- "SScILD.L"
+
+cat("TFs per disease:\n")
+print(sapply(tf_list, length))
+
+
+#11.2 heatmap of shared regulons pairwise
+
+diseases <- names(tf_list)
+n <- length(diseases)
+
+pairwise_mat <- matrix(0, nrow = n, ncol = n, dimnames = list(diseases, diseases))
+
+for (i in 1:n) {
+  for (j in 1:n) {
+    pairwise_mat[i, j] <- length(intersect(tf_list[[diseases[i]]], tf_list[[diseases[j]]]))
+  }
+}
+
+write.csv(pairwise_mat, "output/Fusion/pairwise_shared_regulons_matrix.csv")
+
+pdf("output/Fusion/pairwise_shared_regulons.pdf", width = 13, height = 12)
+pheatmap(
+  pairwise_mat,
+  display_numbers = TRUE,
+  number_format    = "%d",
+  fontsize_number  = 16,
+  fontsize         = 13,
+  fontsize_row     = 13,
+  fontsize_col     = 13,
+  color            = colorRampPalette(c("white", "red3", "red"))(100),
+  border_color     = "grey60",
+  cellwidth        = 45,
+  cellheight       = 45,
+  angle_col        = "90"
+)
+dev.off()
+
+cat("Done!\n")
+
+
+
+
+```
+
+
+
+
+
+
+##11.3upset plot with all intersect combinations
+```{r}
+
+library(UpSetR)
+
+
+#1.3 upset plot with all intersect combinations
+
+pdf("output/Fusion/upset_regulons_combinations.pdf", 
+    width = 14, height = 12,
+    onefile = FALSE)
+
+upset(
+  fromList(tf_list),
+  nsets             = length(tf_list),
+  nintersects       = 30,
+  order.by          = "freq",
+  mb.ratio          = c(0.5, 0.5),     # more room for set size bars on the left
+  text.scale        = c(1.8, 1.4, 1.4, 1.2, 1.5, 1.3),
+  point.size        = 3.5,
+  line.size         = 1.2,
+  main.bar.color    = "#993404",
+  sets.bar.color    = "#2c7fb8",
+  matrix.color      = "black",
+  shade.color       = "grey85",
+  set_size.show     = TRUE,
+  set_size.scale_max = max(sapply(tf_list, length)) * 1.15   # add headroom so numbers aren't cut off
+)
+
+dev.off()
+
+
+
+
+
+```
+
+
+
+##12. TLS GLObal plots
+
+
+```{r}
+#without filtering.
+
+library(Seurat)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(grid)
+library(dplyr)
+
+#1.load all seurat obj and put in a list
+seurat_list <- list(
+  MS = MS, RA = RA, SS = SS, T1D = T1D,
+  IPF.U = IPF.U, IPF.L = IPF.L, SjD = SjD,
+  SScILD.L = SScILD.L, SScILD.U = SScILD.U
+)
+
+
+#2.define marker groups
+
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+                      "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+                   "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+                   "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12",
+                          "CXCR5", "CCR7", "CXCR4")
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+markers_all <- unique(c(germinal_center, inflammation,
+                         lymphoid_chemokines, hev, fdc))
+
+marker_groups_all <- case_when(
+  markers_all %in% germinal_center     ~ "Germinal Center",
+  markers_all %in% inflammation        ~ "Inflammation & Cytokines",
+  markers_all %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
+  markers_all %in% hev                 ~ "HEV",
+  markers_all %in% fdc                 ~ "FDC"
+)
+names(marker_groups_all) <- markers_all
+
+group_cols <- c(
+  "Germinal Center"          = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines"      = "#35978F",
+  "HEV"                      = "#8073AC",
+  "FDC"                      = "#E08214"
+)
+
+
+#3.color for celltype
+
+all_celltypes <- sort(unique(unlist(lapply(seurat_list, function(o) as.character(unique(o$General))))))
+print(all_celltypes)
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+# cell types to exclude from being picked as the dominant cell type
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells","Melanocytes","Keratinocytes","Endocrine Cells","Smooth Muscle Cells","Plasma Cells")
+
+
+#4.dominant celltypes (excluding the unwanted cell types BEFORE picking the max)
+
+get_disease_dominance <- function(obj, disease_name, markers, exclude = excluded_celltypes) {
+  Idents(obj) <- "General"
+  DefaultAssay(obj) <- "RNA"
+  present <- intersect(markers, rownames(obj))
+  if (length(present) == 0) return(NULL)
+
+  expr_mat <- GetAssayData(obj, layer = "data")
+
+  percent_mat <- sapply(levels(Idents(obj)), function(ct) {
+    cells <- WhichCells(obj, idents = ct)
+    if (length(cells) == 0) return(rep(0, length(present)))
+    Matrix::rowMeans(expr_mat[present, cells, drop = FALSE] > 0) * 100
+  })
+  percent_mat <- as.matrix(percent_mat)
+  rownames(percent_mat) <- present
+
+  avg_exp <- AverageExpression(obj, features = present, assays = "RNA",
+                                layer = "data", return.seurat = FALSE)$RNA
+  exp_mat <- as.matrix(avg_exp[present, colnames(percent_mat), drop = FALSE])
+  exp_mat[is.infinite(exp_mat) | is.na(exp_mat)] <- 0
+  mode(exp_mat) <- "numeric"
+
+  # NOTE: no z-score scaling here - using raw log1p-transformed average
+  # expression directly to determine the dominant cell type
+  exp_scaled <- log1p(exp_mat)
+  exp_scaled[is.na(exp_scaled)] <- 0
+
+  # remove excluded cell types from consideration BEFORE picking the dominant one
+  keep_cols <- setdiff(colnames(exp_scaled), exclude)
+  exp_scaled  <- exp_scaled[, keep_cols, drop = FALSE]
+  percent_mat <- percent_mat[, keep_cols, drop = FALSE]
+
+  dom_idx <- apply(exp_scaled, 1, which.max)
+  dom_ct  <- colnames(exp_scaled)[dom_idx]
+  dom_pct <- percent_mat[cbind(seq_len(nrow(percent_mat)), dom_idx)]
+
+  data.frame(
+    marker = present,
+    disease = disease_name,
+    dominant_celltype = dom_ct,
+    pct_exp = dom_pct,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+#5.loop over disease
+
+results <- bind_rows(lapply(names(seurat_list), function(d) {
+  get_disease_dominance(seurat_list[[d]], d, markers_all)
+}))
+
+
+#6.marker and disease matrix
+
+diseases <- names(seurat_list)
+markers_present <- markers_all[markers_all %in% unique(results$marker)]
+
+dom_ct_mat <- matrix(NA, nrow = length(markers_present), ncol = length(diseases),
+                      dimnames = list(markers_present, diseases))
+pct_mat <- matrix(0, nrow = length(markers_present), ncol = length(diseases),
+                   dimnames = list(markers_present, diseases))
+
+for (i in seq_len(nrow(results))) {
+  r <- results[i, ]
+  dom_ct_mat[r$marker, r$disease] <- r$dominant_celltype
+  pct_mat[r$marker, r$disease]    <- r$pct_exp
+}
+
+marker_groups_final <- marker_groups_all[markers_present]
+
+cat("Total markers plotted (no filtering applied):", length(markers_present), "\n")
+
+
+#7.bubble drawing function - solid color dots, no black border
+# NOTE: no pct_exp filtering step here - every marker in markers_all is
+# kept and plotted, regardless of how low its expression is
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  ct <- dom_ct_mat[i, j]
+  if (is.na(ct)) return(invisible(NULL))
+  grid::grid.circle(
+    x = x, y = y,
+    r = (pct_mat[i, j] / 100) * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = celltype_cols[ct], col = celltype_cols[ct])
+  )
+}
+
+
+#8.marker annotation
+
+row_ha <- rowAnnotation(
+  Group = marker_groups_final,
+  col = list(Group = group_cols),
+  annotation_width = unit(3, "mm"),
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(
+    Group = list(title = "TLS genes",
+                 title_gp = gpar(fontsize = 10, fontface = "bold"),
+                 labels_gp = gpar(fontsize = 9))
+  )
+)
+
+
+#9.heatmap - clustering enabled (rows cluster WITHIN each TLS group, columns cluster too)
+
+ht <- Heatmap(
+  pct_mat,
+  name = "blank",
+  col = colorRamp2(c(0, 100), c("white", "white")),
+  rect_gp = gpar(type = "none"),
+  cell_fun = cell_fun,
+  show_heatmap_legend = FALSE,
+  row_names_gp = gpar(fontsize = 12, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 15, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  left_annotation = row_ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  clustering_distance_rows = "euclidean",
+  clustering_distance_columns = "euclidean",
+  clustering_method_rows = "complete",
+  clustering_method_columns = "complete",
+  show_row_dend = FALSE,
+  show_column_dend = TRUE,
+  row_split = marker_groups_final,
+  row_title_gp = gpar(fontsize = 10, fontface = "bold"),
+  row_gap = unit(2, "mm")
+)
+
+
+#10.legend
+
+lgd_celltype <- Legend(
+  labels = names(celltype_cols)[!(names(celltype_cols) %in% excluded_celltypes)],
+  legend_gp = gpar(fill = celltype_cols[!(names(celltype_cols) %in% excluded_celltypes)]),
+  title = "Celltypes",
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+# size legend - full 0-100% range since no floor/threshold is applied
+pct_breaks <- c(0, 25, 50, 75, 100)
+lgd_size <- Legend(
+  labels = paste0(pct_breaks, "%"),
+  title = "% of cells expressing gene",
+  type = "points",
+  pch = 16,
+  size = unit((pct_breaks / 100) * 0.45 * 4, "mm"),
+  legend_gp = gpar(col = "grey40", fill = "grey70"),
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
+
+pdf("output/Fusion/TLS_plot_nofilter.pdf", width = 10, height = 12)
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
+dev.off()
+
+
+
+
+```
+
+
+
+
+
+```{r}
+##with filter
+
+
+library(Seurat)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(grid)
+library(dplyr)
+
+#1.load all seurat obj and put in a list
+seurat_list <- list(
+  MS = MS, RA = RA, SS = SS, T1D = T1D,
+  IPF.U = IPF.U, IPF.L = IPF.L, SjD = SjD,
+  SScILD.L = SScILD.L, SScILD.U = SScILD.U
+)
+
+
+#2.define marker groups
+
+germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+                      "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+                   "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+                   "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12",
+                          "CXCR5", "CCR7", "CXCR4")
+hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+         "CXCL13", "CD54", "ICAM1", "FCER2")
+
+markers_all <- unique(c(germinal_center, inflammation,
+                         lymphoid_chemokines, hev, fdc))
+
+marker_groups_all <- case_when(
+  markers_all %in% germinal_center     ~ "Germinal Center",
+  markers_all %in% inflammation        ~ "Inflammation & Cytokines",
+  markers_all %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
+  markers_all %in% hev                 ~ "HEV",
+  markers_all %in% fdc                 ~ "FDC"
+)
+names(marker_groups_all) <- markers_all
+
+group_cols <- c(
+  "Germinal Center"          = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines"      = "#35978F",
+  "HEV"                      = "#8073AC",
+  "FDC"                      = "#E08214"
+)
+
+
+#3.color for celltype
+
+all_celltypes <- sort(unique(unlist(lapply(seurat_list, function(o) as.character(unique(o$General))))))
+print(all_celltypes)
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+
+# cell types to exclude from being picked as the dominant cell type
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells","Melanocytes","Keratinocytes","Endocrine Cells","Smooth Muscle Cells","Plasma Cells")
+
+
+#4.dominant celltypes 
+
+
+get_disease_dominance <- function(obj, disease_name, markers, exclude = excluded_celltypes) {
+  Idents(obj) <- "General"
+  DefaultAssay(obj) <- "RNA"
+  present <- intersect(markers, rownames(obj))
+  if (length(present) == 0) return(NULL)
+
+  expr_mat <- GetAssayData(obj, layer = "data")
+
+  percent_mat <- sapply(levels(Idents(obj)), function(ct) {
+    cells <- WhichCells(obj, idents = ct)
+    if (length(cells) == 0) return(rep(0, length(present)))
+    Matrix::rowMeans(expr_mat[present, cells, drop = FALSE] > 0) * 100
+  })
+  percent_mat <- as.matrix(percent_mat)
+  rownames(percent_mat) <- present
+
+  avg_exp <- AverageExpression(obj, features = present, assays = "RNA",
+                                layer = "data", return.seurat = FALSE)$RNA
+  exp_mat <- as.matrix(avg_exp[present, colnames(percent_mat), drop = FALSE])
+  exp_mat[is.infinite(exp_mat) | is.na(exp_mat)] <- 0
+  mode(exp_mat) <- "numeric"
+
+  # z-score scaling per gene, across cell types (fair comparison between genes)
+  exp_scaled <- log1p(exp_mat)
+  exp_scaled <- t(scale(t(exp_scaled)))
+  exp_scaled[is.na(exp_scaled)] <- 0
+
+  # remove excluded cell types from consideration BEFORE picking the dominant one
+  keep_cols <- setdiff(colnames(exp_scaled), exclude)
+  exp_scaled  <- exp_scaled[, keep_cols, drop = FALSE]
+  percent_mat <- percent_mat[, keep_cols, drop = FALSE]
+
+  dom_idx <- apply(exp_scaled, 1, which.max)
+  dom_ct  <- colnames(exp_scaled)[dom_idx]
+  dom_pct <- percent_mat[cbind(seq_len(nrow(percent_mat)), dom_idx)]
+  dom_exp <- exp_scaled[cbind(seq_len(nrow(exp_scaled)), dom_idx)]  # scaled expression at the winning cell type
+
+  data.frame(
+    marker = present,
+    disease = disease_name,
+    dominant_celltype = dom_ct,
+    pct_exp = dom_pct,
+    dom_exp = dom_exp,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+#5.loop over disease
+
+results <- bind_rows(lapply(names(seurat_list), function(d) {
+  get_disease_dominance(seurat_list[[d]], d, markers_all)
+}))
+
+
+#6.marker and disease matrix
+
+diseases <- names(seurat_list)
+markers_present <- markers_all[markers_all %in% unique(results$marker)]
+
+dom_ct_mat <- matrix(NA, nrow = length(markers_present), ncol = length(diseases),
+                      dimnames = list(markers_present, diseases))
+pct_mat <- matrix(0, nrow = length(markers_present), ncol = length(diseases),
+                   dimnames = list(markers_present, diseases))
+dom_exp_mat <- matrix(NA, nrow = length(markers_present), ncol = length(diseases),
+                       dimnames = list(markers_present, diseases))
+
+for (i in seq_len(nrow(results))) {
+  r <- results[i, ]
+  dom_ct_mat[r$marker, r$disease]  <- r$dominant_celltype
+  pct_mat[r$marker, r$disease]     <- r$pct_exp
+  dom_exp_mat[r$marker, r$disease] <- r$dom_exp
+}
+
+marker_groups_final <- marker_groups_all[markers_present]
+
+
+#7.filter out markers with negligible expression everywhere
+
+pct_threshold <- 10   # adjust if needed
+
+keep_markers <- rownames(pct_mat)[apply(pct_mat, 1, function(x) any(x >= pct_threshold, na.rm = TRUE))]
+
+dom_ct_mat   <- dom_ct_mat[keep_markers, , drop = FALSE]
+pct_mat      <- pct_mat[keep_markers, , drop = FALSE]
+dom_exp_mat  <- dom_exp_mat[keep_markers, , drop = FALSE]
+marker_groups_final <- marker_groups_final[keep_markers]
+markers_present <- keep_markers
+
+cat("Markers kept after filtering (pct_exp >=", pct_threshold,
+    "% in at least one disease):", length(keep_markers), "\n")
+
+
+#8.row-wise (per-marker) z-score ACROSS DISEASES
+
+
+row_scaled_mat <- t(scale(t(dom_exp_mat)))
+row_scaled_mat[is.na(row_scaled_mat)] <- 0
+
+# normalize to 0-1 for dot size (min-max per the whole matrix, with a
+# floor so even below-average diseases still show a small visible dot)
+min_val <- min(row_scaled_mat, na.rm = TRUE)
+max_val <- max(row_scaled_mat, na.rm = TRUE)
+size_mat <- 0.15 + 0.85 * (row_scaled_mat - min_val) / (max_val - min_val)
+
+
+#9.bubble drawing function
+
+cell_fun <- function(j, i, x, y, w, h, fill) {
+  ct <- dom_ct_mat[i, j]
+  if (is.na(ct)) return(invisible(NULL))
+  grid::grid.circle(
+    x = x, y = y,
+    r = size_mat[i, j] * 0.45 * min(grid::unit.c(w, h)),
+    gp = grid::gpar(fill = celltype_cols[ct], col = celltype_cols[ct])
+  )
+}
+
+
+#10.marker annotation
+
+row_ha <- rowAnnotation(
+  Group = marker_groups_final,
+  col = list(Group = group_cols),
+  annotation_width = unit(3, "mm"),
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(
+    Group = list(title = "TLS genes",
+                 title_gp = gpar(fontsize = 10, fontface = "bold"),
+                 labels_gp = gpar(fontsize = 9))
+  )
+)
+
+
+#11.heatmap 
+
+ht <- Heatmap(
+  pct_mat,
+  name = "blank",
+  col = colorRamp2(c(0, 100), c("white", "white")),
+  rect_gp = gpar(type = "none"),
+  cell_fun = cell_fun,
+  show_heatmap_legend = FALSE,
+  row_names_gp = gpar(fontsize = 12, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 15, fontface = "bold"),
+  column_names_rot = 90,
+  border = TRUE,
+  left_annotation = row_ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  clustering_distance_rows = "euclidean",
+  clustering_distance_columns = "euclidean",
+  clustering_method_rows = "complete",
+  clustering_method_columns = "complete",
+  show_row_dend = FALSE,
+  show_column_dend = TRUE,
+  row_split = marker_groups_final,
+  row_title_gp = gpar(fontsize = 10, fontface = "bold"),
+  row_gap = unit(2, "mm")
+)
+
+
+#12.legend
+
+lgd_celltype <- Legend(
+  labels = names(celltype_cols)[!(names(celltype_cols) %in% excluded_celltypes)],
+  legend_gp = gpar(fill = celltype_cols[!(names(celltype_cols) %in% excluded_celltypes)]),
+  title = "Celltypes",
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+# size legend - now represents relative (row-scaled) expression across
+# diseases, not raw pct_exp - so breaks are shown in SD units
+size_breaks_sd <- c(-1.5, -0.5, 0.5, 1.5, 2.5)
+size_breaks_norm <- 0.15 + 0.85 * (size_breaks_sd - min_val) / (max_val - min_val)
+size_breaks_norm <- pmax(0.15, pmin(1, size_breaks_norm))
+
+lgd_size <- Legend(
+  labels = paste0(size_breaks_sd, " SD"),
+  title = "Relative expression\n(z-score across diseases)",
+  type = "points",
+  pch = 16,
+  size = unit(size_breaks_norm * 0.45 * 4, "mm"),
+  legend_gp = gpar(col = "grey40", fill = "grey70"),
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
+
+pdf("output/Fusion/TLS_plot_filtered.pdf", width = 10, height = 12)
+draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
+dev.off()
+
+
+
+```
+
+
+
+
+```{r}
+
 #--------save
-#saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
+saveRDS(Fu, file = "data/process/SeuratObjects/Fusion/F_process.rds")
 #load-----later
 Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
 
 ```
+
+
+
+
+
+
+
+
+
+
+
 
 
 

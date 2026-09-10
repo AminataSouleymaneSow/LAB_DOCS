@@ -1,0 +1,1317 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+ #########cell cell communication between diseases
+
+
+
+###1.packages
+```{r setup, include=FALSE}
+
+##################PACKAGES
+library(Seurat)
+library(Matrix)
+library(dplyr)
+library(gprofiler2)
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(cowplot)
+library(BiocManager)
+library(devtools)
+ #### the wd
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
+
+
+```
+
+
+
+```{r}
+
+use_gpu <- TRUE
+library(reticulate, quietly = TRUE)
+#reticulate::use_condaenv("lianaenv", required = TRUE) #use this one or the whole path
+reticulate::use_condaenv( "lianaenv", conda = "/mnt/nfs/home/aminata.sow/miniforge3/bin/conda", required = TRUE )
+
+```
+
+
+```{r}
+
+suppressMessages({
+    library(dplyr, quietly = TRUE)
+    library(tidyr, quietly = TRUE)
+    library(purrr, quietly = TRUE)
+    library(forcats, quietly = TRUE)
+    library(textshape, quietly = TRUE)
+    library(ggpubr, quietly = TRUE)
+    library(rstatix, quietly = TRUE)
+    library(reshape2, quietly = TRUE)
+    library(tibble, quietly = TRUE)
+
+    library(scater, quietly = TRUE)
+    library(scuttle, quietly = TRUE)
+
+    library(ggplot2, quietly = TRUE)
+
+    library(liana, quietly = TRUE)
+    library(decoupleR, quietly = TRUE)
+     library("ExperimentHub")
+   c2c <- reticulate::import(module = "cell2cell")
+})
+
+##load the seurat obj and put it in SingleCellExperiment format
+Fu=readRDS("data/process/SeuratObjects/Fusion/F_process.rds")
+Fu@meta.data <- Fu@meta.data[, keep_cols]
+Fu = DietSeurat(Fu, assays = "RNA")
+Fu[["RNA"]]=JoinLayers(Fu[["RNA"]])
+sce <- as.SingleCellExperiment(Fu)
+Assays(Fu)
+saveRDS(sce,file = "data/process/SeuratObjects/Fusion/sce_raw.rds")
+sce=readRDS("data/process/SeuratObjects/Fusion/sce_raw.rds")
+
+```
+
+
+##2 QC
+```{r}
+
+#check the threshold before
+colData(sce)
+hist(
+  colSums(counts(sce) > 0),
+  breaks = 100,
+  main = "Detected genes per cell",
+  xlab = "Number of genes"
+)
+
+# basic filters
+sce <- scater::addPerCellQC(sce)
+min.features <- 500
+min.cells <- 5
+
+qc <- scater::perCellQCMetrics(sce)
+sce <- sce[rowSums(counts(sce) >= 1) >= min.cells, ]
+ sce <-  sce[, colSums(counts(sce) >= 1) >= min.features]
+
+
+#mt
+is.mito <- grep("MT-", rownames(sce))
+per.cell <- scuttle::perCellQCMetrics(sce, subsets=list(Mito=is.mito))
+colData(sce)[['subsets_Mito_percent']] <- per.cell$subsets_Mito_percent
+
+class(colData(sce)$subsets_Mito_percent)
+hist(
+  colData(sce)$subsets_Mito_percent,
+  breaks = 100,
+  main = "Mitochondrial percentage per cell",
+  xlab = "Percent mitochondrial reads"
+)
+sce <- sce[, colData(sce)$subsets_Mito_percent < 15]
+
+
+```
+
+
+##3Normalization
+
+```{r}
+#----------------------------
+scale.factor <- 1e4
+lib.sizes <- colSums(counts(sce)) / scale.factor
+assay(sce, 'logcounts') <- scuttle::normalizeCounts(sce, size.factors=lib.sizes, log=FALSE, center.size.factors=FALSE)
+assay(sce, 'logcounts') <- log1p(assay(sce, 'logcounts'))
+head(colData(sce))
+
+```
+
+
+##4 cell cell comm
+```{r}
+
+liana_res <- liana_bysample(
+  sce = sce,
+  sample_col = "Condition",
+  idents_col = "General",
+  resource = 'Consensus',
+  expr_prop = 0.1,
+  min_cells = 5,
+  assay.type = 'logcounts',
+  aggregate_how = 'both',
+  verbose = TRUE,
+  inplace = FALSE,
+  permutation.params = list(nperms = 100),
+  return_all = TRUE
+)
+
+# convert to dataframe
+names(liana_res) <- unique(colData(sce)$Condition)
+liana_res <- bind_rows(liana_res, .id = "Condition")
+liana_res$Condition <- as.character(liana_res$Condition)
+
+table(liana_res$Condition)
+write.csv(liana_res, file = "CCC/Fusion/output/liana_res.csv", row.names = FALSE)
+
+# filter
+liana_filt <- liana_res %>%
+  filter(magnitude_rank <= 0.05,
+         cellphonedb.pvalue <= 0.01)
+table(liana_filt$Condition)
+write.csv(liana_filt, file = "CCC/Fusion/output/liana_filt.csv", row.names = FALSE)
+
+liana_filt=read.csv("CCC/Fusion/output/liana_filt.csv")
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+#1. exclude the same cell types used throughout the project
+
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+                         "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+                         "Plasma Cells")
+
+
+#2. keep only interactions where NEITHER source NOR target is an
+# excluded cell type - focus on everything else
+
+liana_filt_twice <- liana_filt %>%
+  filter(!source %in% excluded_celltypes & !target %in% excluded_celltypes)
+
+cat("Interactions before:", nrow(liana_filt), "\n")
+cat("Interactions after:", nrow(liana_filt_twice), "\n")
+
+cat("Cell types remaining as source:\n")
+print(sort(unique(liana_filt_twice$source)))
+cat("Cell types remaining as target:\n")
+print(sort(unique(liana_filt_twice$target)))
+
+
+#3. save
+
+write.csv(liana_filt_twice, file = "CCC/Fusion/output/liana_filt_twice.csv", row.names = FALSE)
+
+cat("Saved: CCC/Fusion/output/liana_filt_twice.csv\n")
+
+```
+
+
+
+
+
+
+
+
+#5.#We can use Tensor-cell2cell to infer context-dependent
+#CCC patterns from multiple samples simultaneously. 
+
+```{r}
+
+# store by condition using filtered cell types
+sce@metadata[['liana_filt']] <- split(liana_filt_twice, liana_filt_twice$Condition)
+
+# update sorted samples
+sorted_samples <- sort(names(sce@metadata[['liana_filt']]))
+
+# build tensor
+context_df_dict <- liana:::preprocess_scores(
+  context_df_dict = sce@metadata[['liana_filt']],
+  invert = TRUE,
+  invert_fun = function(x) 1 - x,
+  non_negative = TRUE,
+  non_negative_fill = 0
+)
+
+tensor <- liana_tensor_c2c(
+  context_df_dict = context_df_dict,
+  sender_col = "source",
+  receiver_col = "target",
+  ligand_col = "ligand.complex",
+  receptor_col = "receptor.complex",
+  score_col = 'magnitude_rank',
+  how = 'outer_cells',
+  outer_fraction = 1/3,
+  context_order = sorted_samples,
+  conda_env = '/mnt/nfs/home/aminata.sow/miniforge3/envs/lianaenv',
+  build_only = TRUE,
+  device = use_gpu
+)
+
+#save tensor
+tensor$shape
+reticulate::py_save_object(tensor, "CCC/Fusion/output/tensor_bycondition_filt.pkl")
+
+library(reticulate)
+tensor <- py_load_object("CCC/Fusion/output/tensor_bycondition_filt.pkl")
+
+
+
+```
+
+
+
+
+
+##5.1Tensor Factorization:
+
+```{r}
+#load tensor
+
+
+#decompose the tensor 
+tensor <- liana::decompose_tensor(
+  tensor = tensor,
+  rank = 12,
+  tf_optimization = 'regular',
+  seed = 0,
+  factors_only = FALSE
+)
+
+#
+print(paste0('The estimated tensor rank is: ', tensor$rank))
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(ggpubr)
+
+#1. store factors
+
+sce@metadata$tensor_res <- liana:::format_c2c_factors(tensor$factors)
+sce@metadata$tensor_res$contexts$Condition <- as.character(sce@metadata$tensor_res$contexts$context)
+
+condition_col <- "Condition"
+sample_col <- "Condition"
+
+condition_colors <- c(
+  "IPF.L"    = "#E63946",
+  "IPF.U"    = "#F4A261",
+  "MS"       = "#2A9D8F",
+  "RA"       = "#457B9D",
+  "SjD"      = "#8338EC",
+  "SS"       = "#FB5607",
+  "SScILD.L" = "#FFBE0B",
+  "SScILD.U" = "#3A86FF",
+  "T1D"      = "#06D6A0",
+  "LN"       = "#6D6875"
+)
+
+
+#1b. exclude the same cell types filtered throughout the project, and
+# use the SAME consistent color palette (instead of the previous
+# celltype_colors, which had different colors/categories)
+
+excluded_celltypes <- c("Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+                         "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+                         "Plasma Cells")
+
+celltype_colors <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+# filter senders/receivers tables to drop the excluded cell types BEFORE
+# any plotting happens
+sce@metadata$tensor_res$senders <- sce@metadata$tensor_res$senders %>%
+  filter(!celltype %in% excluded_celltypes)
+
+sce@metadata$tensor_res$receivers <- sce@metadata$tensor_res$receivers %>%
+  filter(!celltype %in% excluded_celltypes)
+
+cat("Cell types kept in senders:\n")
+print(sort(unique(sce@metadata$tensor_res$senders$celltype)))
+cat("Cell types kept in receivers:\n")
+print(sort(unique(sce@metadata$tensor_res$receivers$celltype)))
+
+missing_colors <- setdiff(
+  unique(c(sce@metadata$tensor_res$senders$celltype,
+           sce@metadata$tensor_res$receivers$celltype)),
+  names(celltype_colors)
+)
+if (length(missing_colors) > 0) {
+  cat("WARNING - these cell types have no assigned color:\n")
+  print(missing_colors)
+}
+
+
+#2. overview plot (contexts, interactions, senders, receivers per factor)
+
+factors <- paste0("Factor.", 1:12)
+
+plots <- lapply(factors, function(f) {
+  p_ctx <- sce@metadata$tensor_res$contexts %>%
+    ggplot(aes(x = context, y = .data[[f]], fill = context)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = condition_colors) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none") +
+    labs(x = "", y = f, title = if(f == "Factor.1") "Contexts" else "")
+
+  p_int <- sce@metadata$tensor_res$interactions %>%
+    ggplot(aes(x = lr, y = .data[[f]])) +
+    geom_bar(stat = "identity", fill = "grey40") +
+    theme_bw() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none") +
+    labs(x = "", y = "", title = if(f == "Factor.1") "Interactions" else "")
+
+  p_snd <- sce@metadata$tensor_res$senders %>%
+    ggplot(aes(x = celltype, y = .data[[f]], fill = celltype)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = celltype_colors) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none") +
+    labs(x = "", y = "", title = if(f == "Factor.1") "Senders" else "")
+
+  p_rcv <- sce@metadata$tensor_res$receivers %>%
+    ggplot(aes(x = celltype, y = .data[[f]], fill = celltype)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = celltype_colors) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none") +
+    labs(x = "", y = "", title = if(f == "Factor.1") "Receivers" else "")
+
+  p_ctx | p_int | p_snd | p_rcv
+})
+
+leg_combined <- cowplot::plot_grid(
+  cowplot::get_legend(
+    ggplot(sce@metadata$tensor_res$contexts, aes(x = context, y = Factor.1, fill = context)) +
+      geom_bar(stat = "identity") + scale_fill_manual(values = condition_colors) + labs(fill = "Condition")
+  ),
+  cowplot::get_legend(
+    ggplot(sce@metadata$tensor_res$senders, aes(x = celltype, y = Factor.1, fill = celltype)) +
+      geom_bar(stat = "identity") + scale_fill_manual(values = celltype_colors) + labs(fill = "Cell type")
+  ),
+  ncol = 2
+)
+
+final_plot <- wrap_plots(plots, ncol = 1) | leg_combined
+ggsave("CCC/Fusion/output/tensor_overview_12factors.pdf", final_plot, width = 22, height = 40)
+
+
+#3. downstream visualization
+
+sample_loadings <- sce@metadata$tensor_res$contexts %>%
+  pivot_longer(-c('Condition', 'context'), names_to = "factor", values_to = "loadings") %>%
+  mutate(factor = factor(factor))
+
+ggbarplot(sample_loadings, x = condition_col, y = "loadings", fill = condition_col) +
+  scale_fill_manual(values = condition_colors) +
+  facet_wrap(~factor, ncol = 4) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "right") +
+  labs(fill = "Condition")
+
+ggsave("CCC/Fusion/output/tensor_downstream_visualization.pdf", width = 20, height = 15)
+
+
+
+
+```
+
+
+
+```{r}
+
+
+#4.shared and unique programmes
+
+test_plot <- sce@metadata$tensor_res$contexts %>%
+  column_to_rownames("context") %>%
+  select(-Condition) %>%
+  as.matrix()
+
+pdf("CCC/Fusion/output/tensor_shared_and_unique_programs.pdf", width = 10, height = 8)
+print(
+  pheatmap::pheatmap(
+    test_plot,
+    color = colorRampPalette(c("white", "#E63946"))(100),
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    main = "Shared and unique programmes per condition"
+  )
+)
+dev.off()
+
+
+```
+
+
+
+
+
+
+###6.shared and unique interactions between factors
+```{r}
+
+# test multiple thresholds
+thresholds <- c(0.046, 0.059, 0.07)  # median, 3rd quartile, stringent custom
+
+threshold_results <- lapply(thresholds, function(threshold) {
+  lr_assign <- sce@metadata$tensor_res$interactions %>%
+    pivot_longer(-lr, names_to = "factor", values_to = "loading") %>%
+    filter(loading > threshold) %>%
+    group_by(lr) %>%
+    summarise(n_factors = n_distinct(factor), .groups = "drop")
+  
+  data.frame(
+    threshold = threshold,
+    unique = sum(lr_assign$n_factors == 1),
+    shared = sum(lr_assign$n_factors > 1),
+    total = nrow(lr_assign)
+  )
+})
+
+threshold_summary <- do.call(rbind, threshold_results)
+print(threshold_summary)
+
+# use the chosen threshold
+
+threshold <- 0.059
+
+lr_factor_assignment <- sce@metadata$tensor_res$interactions %>%
+  pivot_longer(-lr, names_to = "factor", values_to = "loading") %>%
+  filter(loading > threshold) %>%
+  group_by(lr) %>%
+  summarise(n_factors = n_distinct(factor),
+            factors = paste(unique(factor), collapse = ", "),
+            .groups = "drop")
+
+unique_int <- lr_factor_assignment %>% filter(n_factors == 1)
+shared_int <- lr_factor_assignment %>% filter(n_factors > 1)
+
+cat("Threshold:", threshold, "\n")
+cat("Unique interactions:", nrow(unique_int), "\n")
+cat("Shared interactions:", nrow(shared_int), "\n")
+
+# save
+write.csv(threshold_summary, "CCC/Fusion/output/threshold_test.csv", row.names = FALSE)
+write.csv(unique_int, "CCC/Fusion/output/unique_interactions_per_factor.csv", row.names = FALSE)
+write.csv(shared_int, "CCC/Fusion/output/shared_interactions_between_factors.csv", row.names = FALSE)
+
+shared_int=read.csv("CCC/Fusion/output/shared_interactions_between_factors.csv")
+
+
+
+
+```
+
+
+
+
+```{r}
+
+##plots shared
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+factor_levels <- paste0("Factor.", 1:12)
+
+# top 40 shared LR pairs
+top40_shared <- sce@metadata$tensor_res$interactions %>%
+  pivot_longer(-lr, names_to = "factor", values_to = "int_loading") %>%
+  filter(lr %in% shared_int$lr) %>%
+  group_by(lr) %>%
+  summarise(max_loading = max(int_loading), .groups = "drop") %>%
+  slice_max(max_loading, n = 40) %>%
+  pull(lr)
+
+# lr factors pairs
+shared_expanded <- shared_int %>%
+  tidyr::separate_rows(factors, sep = ", ")
+shared_expanded <- data.frame(
+  lr = shared_expanded$lr,
+  factor = trimws(shared_expanded$factors)
+)
+lr_factor <- shared_expanded %>%
+  filter(lr %in% top40_shared)
+
+#barplot for condition in each factor
+ctx_long <- sce@metadata$tensor_res$contexts %>%
+  pivot_longer(-c(context, Condition), names_to = "factor", values_to = "loading") %>%
+  mutate(factor = factor(factor, levels = factor_levels))
+
+p_bar <- ggplot(ctx_long, aes(x = factor, y = loading, fill = context)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = condition_colors) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "right") +
+  labs(x = "Factor", y = "Context loading", fill = "Condition")
+
+# top senders and receivers / factor
+top_sender <- sce@metadata$tensor_res$senders %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "sender_loading") %>%
+  group_by(factor) %>%
+  slice_max(sender_loading, n = 1) %>%
+  ungroup()
+
+top_receiver <- sce@metadata$tensor_res$receivers %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "receiver_loading") %>%
+  group_by(factor) %>%
+  slice_max(receiver_loading, n = 1) %>%
+  ungroup()
+
+# ONE shared size scale, same name in both plots, so it merges into a
+# single "Loading" legend instead of two separate ones
+shared_size_scale <- scale_size(name = "Loading", range = c(1, 6))
+
+# senders dotplot - this is the ONLY plot that shows the Cell type and
+# Loading legends. LR pair labels (y-axis) explicitly set to black.
+
+sender_dot <- lr_factor %>%
+  left_join(top_sender, by = "factor") %>%
+  mutate(factor = factor(factor, levels = factor_levels))
+
+p_snd <- ggplot(sender_dot, aes(x = factor, y = lr,
+                                 size = sender_loading,
+                                 color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_colors, limits = names(celltype_colors), drop = FALSE) +
+  shared_size_scale +
+  guides(size = guide_legend(order = 1),
+         color = guide_legend(order = 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 10, face = "bold", color = "black")) +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Senders")
+
+# receivers dotplot - color AND size legends both suppressed, since
+# Senders already shows the identical Cell type + Loading legends. Same
+# explicit black LR pair label color as Senders.
+
+receiver_dot <- lr_factor %>%
+  left_join(top_receiver, by = "factor") %>%
+  mutate(factor = factor(factor, levels = factor_levels))
+
+p_rcv <- ggplot(receiver_dot, aes(x = factor, y = lr,
+                                   size = receiver_loading,
+                                   color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_colors, limits = names(celltype_colors),
+                      drop = FALSE, guide = "none") +
+  shared_size_scale +
+  guides(size = "none") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 10, face = "bold", color = "black")) +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       color = "Cell type",
+       title = "Receivers")
+
+# combine plots - guides="collect" merges/deduplicates legends across
+# all three subplots (p_bar, p_snd, p_rcv) into one consistent legend
+# column, positioned on the right
+
+final_plot <- (p_bar / (p_snd | p_rcv)) +
+  plot_layout(heights = c(1, 6), guides = "collect") &
+  theme(legend.position = "right")
+
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+
+ggsave("CCC/Fusion/output/detailed_dotplot_factor_shared_interactions.pdf",
+       final_plot, width = 24, height = 20)
+
+
+
+  
+
+
+
+
+
+```
+
+
+
+```{r}
+##for unique
+
+factor_levels <- paste0("Factor.", 1:12)
+
+unique_int <- read.csv("CCC/Fusion/output/unique_interactions_per_factor.csv")
+
+# top sender and receiver per factor
+top_sender <- sce@metadata$tensor_res$senders %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "sender_loading") %>%
+  group_by(factor) %>%
+  slice_max(sender_loading, n = 1) %>%
+  ungroup()
+
+top_receiver <- sce@metadata$tensor_res$receivers %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "receiver_loading") %>%
+  group_by(factor) %>%
+  slice_max(receiver_loading, n = 1) %>%
+  ungroup()
+
+# unique LR pairs with their factor and loading
+unique_long <- sce@metadata$tensor_res$interactions %>%
+  pivot_longer(-lr, names_to = "factor", values_to = "int_loading") %>%
+  inner_join(unique_int %>% select(lr, factors), by = "lr") %>%
+  filter(factor == factors) %>%
+  mutate(factor = factor(factor, levels = factor_levels))
+
+# senders dotplot
+sender_dot <- unique_long %>%
+  left_join(top_sender, by = "factor")
+
+p_snd <- ggplot(sender_dot, aes(x = factor, y = lr,
+                                 size = sender_loading,
+                                 color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_colors) +
+  scale_size(range = c(1, 6)) +
+  guides(size = guide_legend(order = 1),
+         color = guide_legend(order = 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 8, face = "bold"),
+        legend.position = "right") +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       size = "Sender loading", color = "Sender cell type",
+       title = "Senders")
+
+#receivers dotplot
+receiver_dot <- unique_long %>%
+  left_join(top_receiver, by = "factor")
+
+p_rcv <- ggplot(receiver_dot, aes(x = factor, y = lr,
+                                   size = receiver_loading,
+                                   color = celltype)) +
+  geom_point() +
+  scale_color_manual(values = celltype_colors) +
+  scale_size(range = c(1, 6)) +
+  guides(size = guide_legend(order = 1),
+         color = guide_legend(order = 2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 8, face = "bold"),
+        legend.position = "right") +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       size = "Receiver loading", color = "Receiver cell type",
+       title = "Receivers")
+
+# context barplot 
+ctx_long <- sce@metadata$tensor_res$contexts %>%
+  pivot_longer(-c(context, Condition), names_to = "factor", values_to = "loading") %>%
+  mutate(factor = factor(factor, levels = factor_levels))
+
+p_bar <- ggplot(ctx_long, aes(x = factor, y = loading, fill = context)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = condition_colors) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "right") +
+  labs(x = "Factor", y = "Context loading", fill = "Condition")
+
+# combine 
+final_plot <- p_bar / (p_snd | p_rcv) + plot_layout(heights = c(1, 6))
+
+ggsave("CCC/Fusion/output/unique_interactions_per_factor.pdf",
+       final_plot, width = 24, height = 20)
+
+
+```
+
+
+##plots top 5% of ecah factor
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+top_pct <- 0.05   # top 5% of interactions, computed SEPARATELY for each factor
+# (a fixed % per factor, not a global percentage across all LR pairs -
+# each factor's own loading distribution determines its own 95th percentile)
+
+factors_all <- paste0("Factor.", 1:12)
+
+
+#1. dominant sender/receiver cell type per factor
+
+top_sender_per_factor <- sce@metadata$tensor_res$senders %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_sender = celltype)
+
+top_receiver_per_factor <- sce@metadata$tensor_res$receivers %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_receiver = celltype)
+
+
+#2. get the TOP 5% interactions PER FACTOR (separately for each factor's
+# own loading distribution)
+
+interactions_long <- sce@metadata$tensor_res$interactions %>%
+  pivot_longer(-lr, names_to = "factor", values_to = "loading")
+
+top_interactions <- interactions_long %>%
+  group_by(factor) %>%
+  filter(loading >= quantile(loading, 1 - top_pct, na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(top_sender_per_factor, by = "factor") %>%
+  left_join(top_receiver_per_factor, by = "factor") %>%
+  mutate(factor = factor(factor, levels = factors_all)) %>%
+  arrange(factor, desc(loading))
+
+cat("Total dots in the plot (top", top_pct * 100, "% per factor):", nrow(top_interactions), "\n")
+
+# how many LR pairs appear in MORE than one factor's top 5% (i.e. shared)
+lr_factor_counts <- top_interactions %>%
+  group_by(lr) %>%
+  summarise(n_factors = n_distinct(factor), .groups = "drop")
+
+cat("LR pairs unique to one factor:", sum(lr_factor_counts$n_factors == 1), "\n")
+cat("LR pairs shared across >=2 factors:", sum(lr_factor_counts$n_factors > 1), "\n")
+
+
+#3. save as CSV
+
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+
+write.csv(top_interactions, "CCC/Fusion/output/top5pct_lr_per_factor.csv", row.names = FALSE)
+
+
+#4. colors
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+condition_colors <- c(
+  "IPF.L"    = "#E63946",
+  "IPF.U"    = "#F4A261",
+  "MS"       = "#2A9D8F",
+  "RA"       = "#457B9D",
+  "SjD"      = "#8338EC",
+  "SS"       = "#FB5607",
+  "SScILD.L" = "#FFBE0B",
+  "SScILD.U" = "#3A86FF",
+  "T1D"      = "#06D6A0",
+  "LN"       = "#6D6875"
+)
+
+
+#5. disease contribution barplot on top
+
+context_long <- sce@metadata$tensor_res$contexts %>%
+  pivot_longer(-c(context, Condition), names_to = "factor", values_to = "loading") %>%
+  mutate(factor = factor(factor, levels = factors_all)) %>%
+  group_by(factor) %>%
+  mutate(proportion = loading / sum(loading)) %>%
+  ungroup()
+
+p_bar <- ggplot(context_long, aes(x = factor, y = proportion, fill = Condition)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = condition_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    legend.position = "right"
+  ) +
+  labs(y = "Disease\ncontribution", fill = "Condition")
+
+
+#6. Senders dotplot - clearer LR pair labels (bigger, bold)
+
+p_snd <- ggplot(top_interactions, aes(x = factor, y = lr,
+                                       size = loading, color = top_sender)) +
+  geom_point() +
+  scale_color_manual(values = celltype_cols) +
+  scale_size(range = c(1, 6)) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       size = "Interaction\nscore", color = "Sender cell type",
+       title = "Senders")
+
+
+#7. Receivers dotplot - LR pair labels shown here too (same style as Senders)
+
+p_rcv <- ggplot(top_interactions, aes(x = factor, y = lr,
+                                       size = loading, color = top_receiver)) +
+  geom_point() +
+  scale_color_manual(values = celltype_cols) +
+  scale_size(range = c(1, 6)) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       size = "Interaction\nscore", color = "Receiver cell type",
+       title = "Receivers")
+
+
+#8. combine: ONE barplot on top spanning the full width, with Senders
+# and Receivers side by side below it
+
+final_plot <- p_bar / (p_snd | p_rcv) +
+  plot_layout(heights = c(1, 5))
+
+n_lr <- length(unique(top_interactions$lr))
+
+ggsave("CCC/Fusion/output/Top_5per_lr_per_factor.pdf",
+       final_plot, width = 20, height = max(10, n_lr * 0.28), limitsize = FALSE)
+
+ggsave("CCC/Fusion/output/Top_5per_lr_per_factor.png",
+       final_plot, width = 20, height = max(10, n_lr * 0.28), dpi = 300, limitsize = FALSE)
+
+cat("Saved: CCC/Fusion/output/Top_5per_lr_per_factor.pdf and .png\n")
+
+
+
+
+```
+
+
+```{r}
+#factor 6 and 7 share have similarities in their 5% lr pair.
+#lets check if they have similar disease : different diseases dominate SS,IPF.U for Factor 6 and IPF.U,MS in Factor 7
+sce@metadata$tensor_res$contexts %>%
+  select(Condition, Factor.6, Factor.7)
+
+##if they have same top sender and receiver
+top_sender_per_factor %>% filter(factor %in% c("Factor.6", "Factor.7"))  #mono/mac and Mural Cells
+top_receiver_per_factor %>% filter(factor %in% c("Factor.6", "Factor.7")) #proliferating and B cells
+
+```
+
+
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(ggtext)
+
+
+
+top_pct <- 0.05   # top 5% of interactions, computed SEPARATELY for each factor
+# (a fixed % per factor, not a global percentage across all LR pairs -
+# each factor's own loading distribution determines its own 95th percentile)
+
+factors_all <- paste0("Factor.", 1:12)
+
+
+#1. dominant sender/receiver cell type per factor (same as before)
+
+top_sender_per_factor <- sce@metadata$tensor_res$senders %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_sender = celltype)
+
+top_receiver_per_factor <- sce@metadata$tensor_res$receivers %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_receiver = celltype)
+
+
+#2. get the TOP 5% interactions PER FACTOR (separately for each factor's
+# own loading distribution) - if the same lr pair appears in more than
+# one factor's top 5%, that lr pair is genuinely SHARED across those
+# factors (independently ranked strong in each one), not a coincidence
+
+interactions_long <- sce@metadata$tensor_res$interactions %>%
+  pivot_longer(-lr, names_to = "factor", values_to = "loading")
+
+top_interactions <- interactions_long %>%
+  group_by(factor) %>%
+  filter(loading >= quantile(loading, 1 - top_pct, na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(top_sender_per_factor, by = "factor") %>%
+  left_join(top_receiver_per_factor, by = "factor") %>%
+  mutate(factor = factor(factor, levels = factors_all)) %>%
+  arrange(factor, desc(loading))
+
+cat("Total dots in the plot (top", top_pct * 100, "% per factor):", nrow(top_interactions), "\n")
+
+# how many LR pairs appear in MORE than one factor's top 5% (i.e. shared)
+lr_factor_counts <- top_interactions %>%
+  group_by(lr) %>%
+  summarise(n_factors = n_distinct(factor), .groups = "drop")
+
+cat("LR pairs unique to one factor:", sum(lr_factor_counts$n_factors == 1), "\n")
+cat("LR pairs shared across >=2 factors:", sum(lr_factor_counts$n_factors > 1), "\n")
+
+
+#2b. find which PAIR of factors shares the most LR pairs (from the top
+# 5% selection), so we can highlight both with the same color
+
+lr_sets <- split(top_interactions$lr, top_interactions$factor)
+lr_sets <- lr_sets[sapply(lr_sets, length) > 0]   # drop empty factors, if any
+
+factor_pairs <- combn(names(lr_sets), 2, simplify = FALSE)
+
+pairwise_shared <- sapply(factor_pairs, function(pair) {
+  length(intersect(lr_sets[[pair[1]]], lr_sets[[pair[2]]]))
+})
+
+best_pair_idx <- which.max(pairwise_shared)
+highlight_factors <- factor_pairs[[best_pair_idx]]
+n_shared_best <- pairwise_shared[best_pair_idx]
+
+cat("\nFactor pair sharing the MOST LR pairs:",
+    paste(highlight_factors, collapse = " & "),
+    "-", n_shared_best, "shared LR pairs\n")
+
+
+#3. save as CSV
+
+dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+
+write.csv(top_interactions, "CCC/Fusion/output/top5pct_lr_per_factor.csv", row.names = FALSE)
+cat("Saved: CCC/Fusion/output/top5pct_lr_per_factor.csv\n")
+
+
+#4. colors (same as before)
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "darksalmon"
+)
+
+condition_colors <- c(
+  "IPF.L"    = "#E63946",
+  "IPF.U"    = "#F4A261",
+  "MS"       = "#2A9D8F",
+  "RA"       = "#457B9D",
+  "SjD"      = "#8338EC",
+  "SS"       = "#FB5607",
+  "SScILD.L" = "#FFBE0B",
+  "SScILD.U" = "#3A86FF",
+  "T1D"      = "#06D6A0",
+  "LN"       = "#6D6875"
+)
+
+
+#4b. build highlight: 
+
+highlight_positions <- match(highlight_factors, factors_all)
+highlight_color <- "#B2182B"
+
+highlight_rects <- lapply(highlight_positions, function(pos) {
+  annotate("rect",
+           xmin = pos - 0.5, xmax = pos + 0.5,
+           ymin = -Inf, ymax = Inf,
+           fill = highlight_color, alpha = 0.15)
+})
+
+# colored/bold labels only for the two highlighted factors, plain for the rest
+axis_label_colors <- ifelse(
+  factors_all %in% highlight_factors,
+  paste0("<b style='color:", highlight_color, "'>", factors_all, "</b>"),
+  factors_all
+)
+names(axis_label_colors) <- factors_all
+
+
+#5. disease contribution barplot on top
+
+context_long <- sce@metadata$tensor_res$contexts %>%
+  pivot_longer(-c(context, Condition), names_to = "factor", values_to = "loading") %>%
+  mutate(factor = factor(factor, levels = factors_all)) %>%
+  group_by(factor) %>%
+  mutate(proportion = loading / sum(loading)) %>%
+  ungroup()
+
+p_bar <- ggplot(context_long, aes(x = factor, y = proportion, fill = Condition)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = condition_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    legend.position = "right"
+  ) +
+  labs(y = "Disease\ncontribution", fill = "Condition")
+
+
+#6. Senders dotplot
+
+p_snd <- ggplot(top_interactions, aes(x = factor, y = lr,
+                                       size = loading, color = top_sender)) +
+  highlight_rects +
+  geom_point() +
+  scale_color_manual(values = celltype_cols) +
+  scale_size(range = c(1, 6)) +
+  scale_x_discrete(labels = axis_label_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 90, hjust = 1),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(x = "Factor", y = "Ligand-Receptor pair",
+       size = "Interaction\nscore", color = "Sender cell type",
+       title = "Senders")
+
+
+#7. Receivers dotplot
+
+p_rcv <- ggplot(top_interactions, aes(x = factor, y = lr,
+                                       size = loading, color = top_receiver)) +
+  highlight_rects +
+  geom_point() +
+  scale_color_manual(values = celltype_cols) +
+  scale_size(range = c(1, 6)) +
+  scale_x_discrete(labels = axis_label_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = ggtext::element_markdown(angle = 90, hjust = 1),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "right"
+  ) +
+  labs(x = "Factor", y = NULL,
+       size = "Interaction\nscore", color = "Receiver cell type",
+       title = "Receivers")
+
+
+#8. combine
+
+
+final_plot <- p_bar / (p_snd | p_rcv) +
+  plot_layout(heights = c(1, 5))
+
+n_lr <- length(unique(top_interactions$lr))
+
+ggsave("CCC/Fusion/output/Top_5per_factor_highlight.pdf",
+       final_plot, width = 20, height = max(10, n_lr * 0.28), limitsize = FALSE)
+
+
+
+```
+
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+#1. build disease x factor loading matrix from the contexts table
+
+factor_levels <- paste0("Factor.", 1:12)
+
+ctx_wide <- sce@metadata$tensor_res$contexts %>%
+  select(Condition, all_of(factor_levels)) %>%
+  distinct(Condition, .keep_all = TRUE)
+
+disease_factor_mat <- as.matrix(ctx_wide[, factor_levels])
+rownames(disease_factor_mat) <- ctx_wide$Condition
+
+cat("Disease x Factor matrix dimensions:", dim(disease_factor_mat), "\n")
+print(round(disease_factor_mat, 3))
+
+
+#2. dominant sender / receiver cell type per factor 
+
+top_sender_per_factor <- sce@metadata$tensor_res$senders %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_sender = celltype)
+
+top_receiver_per_factor <- sce@metadata$tensor_res$receivers %>%
+  pivot_longer(-celltype, names_to = "factor", values_to = "loading") %>%
+  group_by(factor) %>%
+  slice_max(order_by = loading, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(factor, top_receiver = celltype)
+
+factor_annotation <- data.frame(factor = factor_levels) %>%
+  left_join(top_sender_per_factor, by = "factor") %>%
+  left_join(top_receiver_per_factor, by = "factor")
+
+rownames(factor_annotation) <- factor_annotation$factor
+factor_annotation <- factor_annotation[colnames(disease_factor_mat), ]
+
+cat("Top sender/receiver per factor:\n")
+print(factor_annotation)
+
+
+#3. colors
+
+celltype_cols <- c(
+  "B Cells"             = "gold",
+  "CD4"                 = "olivedrab2",
+  "CD8"                 = "tomato",
+  "NK Cells"            = "magenta",
+  "Mono/Mac"            = "darkblue",
+  "Mast Cells"          = "#FDBF6F",
+  "Proliferating Cells" = "#B15928",
+  "Endothelial Cells"   = "#E31A1C",
+  "Fibroblasts"         = "cyan",
+  "Mural Cells"         = "#1F78B4",
+  "Epithelial Cells"    = "mediumpurple2"
+)
+
+
+#4. column annotation: dominant sender / receiver cell type per factor -
+
+
+col_ha <- HeatmapAnnotation(
+  `Top sender`   = factor_annotation$top_sender,
+  `Top receiver` = factor_annotation$top_receiver,
+  col = list(
+    `Top sender`   = celltype_cols,
+    `Top receiver` = celltype_cols
+  ),
+  show_legend = FALSE,
+  annotation_name_gp = gpar(fontsize = 9, fontface = "bold"),
+  simple_anno_size = unit(4, "mm")
+)
+
+present_celltypes <- intersect(
+  names(celltype_cols),
+  unique(c(factor_annotation$top_sender, factor_annotation$top_receiver))
+)
+
+lgd_celltype <- Legend(
+  labels = present_celltypes,
+  legend_gp = gpar(fill = celltype_cols[present_celltypes]),
+  title = "Top senders\nand receivers",
+  title_gp = gpar(fontsize = 10, fontface = "bold"),
+  labels_gp = gpar(fontsize = 9)
+)
+
+
+#5. heatmap - diseases (rows) clustered by their factor loading profile,
+# factors (columns) clustered by which diseases activate them similarly
+
+col_fun <- colorRamp2(
+  c(min(disease_factor_mat), median(disease_factor_mat), max(disease_factor_mat)),
+  c("white", "orange", "firebrick")
+)
+
+ht <- Heatmap(
+  disease_factor_mat,
+  name = "Loading",
+  col = col_fun,
+  top_annotation = col_ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  clustering_distance_rows = "euclidean",
+  clustering_distance_columns = "euclidean",
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  show_row_dend = TRUE,
+  show_column_dend = TRUE,
+  row_names_gp = gpar(fontsize = 11, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+  column_names_rot = 45,
+  cell_fun = function(j, i, x, y, w, h, fill) {
+    grid::grid.text(sprintf("%.2f", disease_factor_mat[i, j]),
+                     x, y, gp = gpar(fontsize = 7))
+  },
+  border = TRUE,
+  heatmap_legend_param = list(title = "Factor\nloading")
+)
+
+
+#6. save - ONE combined celltype legend attached, not duplicated
+
+dir.create("output/Fusion", recursive = TRUE, showWarnings = FALSE)
+
+pdf("output/Fusion/disease_factor_similarity.pdf", width = 12, height = 8)
+draw(ht, annotation_legend_list = list(lgd_celltype),
+     heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+saveRDS(sce, file="data/process/SeuratObjects/Fusion/sce_processed.rds")
+sce=readRDS("data/process/SeuratObjects/Fusion/sce_processed.rds")
+
+
+
+```
+
+
+
+
+
