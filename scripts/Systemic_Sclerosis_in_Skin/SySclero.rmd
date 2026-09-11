@@ -1,17 +1,13 @@
 ---
-title: "R Notebook"
+title: "Systemic Sclerosis (Skin) - Processing and Annotation"
 output: html_notebook
-
 ---
-##############################################################################################################################
-###ANALYSIS OF SYSTEMATIC SCLEROSIS DATA######################################################################################
-###############################################################################################################################
 
-###LOAD PACKAGES#####
+
+
+## 1. Packages and setup
+
 ```{r setup, include=FALSE}
-
-##################PACKAGES
-
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -23,190 +19,140 @@ library(cowplot)
 library(BiocManager)
 library(devtools)
 
- #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-
-
-
 ```
 
+## 2. Load raw data and create per-sample Seurat objects
 
-
-
-
-
-###1.load the data
 ```{r}
-##load data using a function for all 12obj, create seurat_obj,merge to one and save it without any process
-#folder
-data.dir="../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Systemic Sclerosis/GSE138669_RAW/"
-# List all .h5 files
-h5.files=list.files( path = data.dir,pattern = "_feature_bc_matrix\\.h5$",full.names = TRUE)
+# DropletUtils provides defaultDrops() and emptyDrops() used below
+library(DropletUtils)
 
-# Assign sample names SS1–SS12
-sample.names=paste0("SS", seq_along(h5.files))
+# raw 10x .h5 files, one per sample
+data.dir <- "../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Systemic Sclerosis/GSE138669_RAW/"
+h5.files <- list.files(path = data.dir, pattern = "_feature_bc_matrix\\.h5$", full.names = TRUE)
+sample.names <- paste0("SS", seq_along(h5.files))
 
- # Loop: read, filter, create Seurat object, save
+# for each sample: read counts, call cells, create and save a Seurat object
 for (i in seq_along(h5.files)) {
   message("Processing ", sample.names[i])
- # Read raw counts
-  SS.x=Read10X_h5(h5.files[i], use.names = TRUE, unique.features = TRUE) 
-# defaultDrops
+  SS.x <- Read10X_h5(h5.files[i], use.names = TRUE, unique.features = TRUE)
+
+  # combine two cell-calling methods to decide which barcodes are real cells
   iscell_dd <- defaultDrops(SS.x, expected = 5000)
- # emptyDrops
-  eout=emptyDrops(SS.x, lower = 200)
+  eout <- emptyDrops(SS.x, lower = 200)
   eout$FDR[is.na(eout$FDR)] <- 1
-  iscell_ed=eout$FDR <= 0.01
-  # metadata
-  meta=data.frame(
+  iscell_ed <- eout$FDR <= 0.01
+
+  meta <- data.frame(
     iscell_dd = iscell_dd,
     iscell_ed = iscell_ed,
     row.names = colnames(SS.x)
   )
-  # keep cells
-  keep=iscell_dd | iscell_ed
-  # Create Seurat object
-  SS=CreateSeuratObject(
+  keep <- iscell_dd | iscell_ed
+
+  SS <- CreateSeuratObject(
     counts = SS.x[, keep],
     meta.data = meta[keep, ]
   )
-  # Add sample name inside Seurat object
-  SS$sample=sample.names[i]   
-  
-# Save Seurat object
-  saveRDS(
-    SS,
-    file = paste0("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/", sample.names[i], ".rds")
-  )
+  SS$sample <- sample.names[i]
+
+  saveRDS(SS, file = paste0("data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/", sample.names[i], ".rds"))
 }
 
-##merge in one seurat obj
-# Folder with Seurat objects
-seurat.dir="data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/"
-rds.files=list.files(seurat.dir,pattern = "^SS[0-9]+\\.rds$",full.names = TRUE)
-# Read them into a list
-SS_list=lapply(rds.files, readRDS)
-# Name the list (SS1–SS12)
-names(SS_list)=sub("\\.rds$", "", basename(rds.files))
+# reload all per-sample objects and merge into one
+seurat.dir <- "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/"
+rds.files <- list.files(seurat.dir, pattern = "^SS[0-9]+\\.rds$", full.names = TRUE)
+SS_list <- lapply(rds.files, readRDS)
+names(SS_list) <- sub("\\.rds$", "", basename(rds.files))
 
-# Merge
-SS=merge(
+SS <- merge(
   x = SS_list[[1]],
   y = SS_list[-1],
   add.cell.ids = names(SS_list),
   project = "Systemic_Sclerosis"
 )
-saveRDS(SS,file = "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_raw.rds")
+saveRDS(SS, file = "data/process/SeuratObjects/Systemic_Sclerosis_in_Skin/SS_raw.rds")
 
-#look for the assay if no RNA seet it as RNA
-SS=readRDS("data/process/SeuratObjects/SS/SS_raw.rds")
-DefaultAssay(SS_obj)
+DefaultAssay(SS)
 
-#save memory
-rm(eout,meta,SS,SS_list,SS.x,h5.files,i,iscell_ed,iscell_dd,keep,rds.files,sample.names)
+# free memory - keep SS, it is used in the following chunks
+rm(eout, meta, SS_list, SS.x, h5.files, i, iscell_ed, iscell_dd, keep, rds.files, sample.names)
 gc(full = TRUE)
-getwd()
 ```
 
+## 3. Quality control
 
+```{r, fig.width=10, fig.height=8}
+SS[["percent.mt"]] <- PercentageFeatureSet(SS, pattern = "^MT-")
+VlnPlot(SS, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, log = TRUE)
 
-###2_the qc
-```{r, fig.width=10,fig.height=8}
-##qc
-SS[["percent.mt"]]=PercentageFeatureSet(SS,pattern = "^MT-")
-VlnPlot(SS,features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3,log = TRUE)
-SS=subset(SS,subset=nFeature_RNA>200 & nFeature_RNA<6000 & percent.mt<15)
-
+# QC thresholds set from this dataset's own distributions
+SS <- subset(SS, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & percent.mt < 15)
 ```
 
+## 4. Normalization, scaling, and PCA
 
-
-
-###3-statistics
 ```{r}
-##norm, fvf,scale,runpca
-SS=NormalizeData(SS)
-SS=FindVariableFeatures(SS)
-SS=ScaleData(SS,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = SS))
-SS=RunPCA(SS, features = VariableFeatures(object = SS))
+SS <- NormalizeData(SS)
+SS <- FindVariableFeatures(SS)
+SS <- ScaleData(SS, vars.to.regress = c("nCount_RNA", "percent.mt"), features = VariableFeatures(object = SS))
+SS <- RunPCA(SS, features = VariableFeatures(object = SS))
 ElbowPlot(SS, ndims = 50, reduction = "pca")
-SS=RunUMAP(SS, dims = 1:30)
-DimPlot(SS,reduction = "umap", label = TRUE)
-
+SS <- RunUMAP(SS, dims = 1:30)
+DimPlot(SS, reduction = "umap", label = TRUE)
 ```
 
+## 5. Harmony integration and clustering resolutions
 
-###4-integration
 ```{r}
-##integration
 library(harmony)
-SS =RunHarmony(SS,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
-SS[["RNA"]]=JoinLayers(SS[["RNA"]])
-SS = RunUMAP(SS, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-SS=FindNeighbors(SS,reduction= "harmony",dims = 1:30)
+SS <- RunHarmony(SS, group.by.vars = "sample", orig.reduction = "pca", dims.use = 1:30)
+SS[["RNA"]] <- JoinLayers(SS[["RNA"]])
+SS <- RunUMAP(SS, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+SS <- FindNeighbors(SS, reduction = "harmony", dims = 1:30)
 
-
-#for the resolution
-
+# scan a range of resolutions before picking one
 for (res in seq(0.2, 1, by = 0.1)) {
-  SS=FindClusters(SS, resolution = res)
-  colname=paste0("res_", res)
-  SS[[colname]]=SS$seurat_clusters
+  SS <- FindClusters(SS, resolution = res)
+  colname <- paste0("res_", res)
+  SS[[colname]] <- SS$seurat_clusters
 }
-res_cols=grep("^res_", colnames(SS@meta.data), value = TRUE)
-for (res in res_cols) {
-  p=DimPlot(SS, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
-  print(p)
-  readline(prompt="Press [Enter] to see the next resolution...")
-}
+res_cols <- grep("^res_", colnames(SS@meta.data), value = TRUE)
 
-#save all
+# save all resolutions to a single PDF for visual comparison
 pdf("output/SS/All_resolutions_UMAP.pdf", width = 6, height = 5)
 for (res in res_cols) {
   p <- DimPlot(SS, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+    ggtitle(paste("Resolution:", res))
   print(p)
 }
 dev.off()
 
-
-#save 
-p=DimPlot(SS,group.by = "res_0.8",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.8") +NoLegend()+
- labs(x = "UMAP.h", y = "UMAP.h") 
-ggsave(filename = "output/SS/SS_resolution.pdf",plot = p,width = 13,height = 8,dpi = 300)
-
-
-
+# resolution 0.8 was chosen for downstream clustering
+p <- DimPlot(SS, group.by = "res_0.8", label = TRUE, reduction = "umap.harmony") +
+  ggtitle("Resolution: 0.8") +
+  NoLegend() +
+  labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/SS/SS_resolution.pdf", plot = p, width = 13, height = 8, dpi = 300)
 ```
 
+## 6. Clustering and marker genes
 
-###5-clusters and markers
 ```{r}
-###clusters
+SS <- FindNeighbors(SS, reduction = "harmony", dims = 1:30)
+SS <- FindClusters(SS, resolution = 0.8, cluster.name = "harmony_clusters")
 
-SS=FindNeighbors(SS,reduction= "harmony",dims = 1:30)
-SS=FindClusters(SS_obj, resolution = 0.8,cluster.name = "harmony_clusters")
-#markers
-SS_markers=FindAllMarkers(SS,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
-SS_markers=SS_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
-
-
+# markers per cluster, used below to name the cell types
+SS_markers <- FindAllMarkers(SS, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+SS_markers <- SS_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 ```
 
+## 7. Cell type annotation
 
-
-
-
-
-
-###6-Annotation
-
-
-```{r}
-genes = c(
+```{r, fig.width=10, fig.height=8}
+genes <- c(
   # Differentiating keratinocytes (suprabasal)
   "KRT1", "KRT2",
 
@@ -224,32 +170,32 @@ genes = c(
 
   # CD4 T cells
   "CD4", "TCF7", "SELL", "CD3D", "CD3E", "TRAC",
-  
+
   # CD8 T cells
   "CD8A", "CD8B", "GZMB",
 
   # B cells
-  "MS4A1", "CD79A", "CD79B", 
-  
+  "MS4A1", "CD79A", "CD79B",
+
   # plasma cells
   "MZB1", "JCHAIN",
-  
+
   # mon/mac
   "CD14", "CD36", "FCGR1A", "LYZ", "CD68", "CLEC9A", "CSF1R",
 
   # NK cells
-  "GNLY","NKG7",
+  "GNLY", "NKG7",
 
-  # Dendritic 
+  # Dendritic
   "CD1C", "HLA-DRA",
 
-  # Macrophages 
+  # Macrophages
   "CCL3", "APOC1",
 
   # Mast cells
   "TPSAB1", "FTH1",
 
-  # Pericytes:Mural cells
+  # Pericytes / Mural cells
   "RGS5", "STEAP4", "RERGL", "CXCR4",
 
   # Smooth muscle cells
@@ -268,8 +214,8 @@ genes = c(
   "APMAP",
 
   # Endothelial cells
-  "PECAM1", "VWF", "RAMP2", "CLDN5", 
-  
+  "PECAM1", "VWF", "RAMP2", "CLDN5",
+
   # Lymphatic endothelial cells
   "CCL21", "PROX1", "LYVE1",
 
@@ -292,60 +238,49 @@ p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
-#save
 ggsave(filename = "output/SS/SS_cluster.pdf", plot = p, width = 13, height = 8)
+```
 
-
-
+```{r}
+l <- FeaturePlot(SS, features = unique(genes), combine = FALSE, order = TRUE, reduction = "umap.harmony")
+names(l) <- unique(genes)
 ```
 
 
 ```{r}
-###use feature plot
-l = FeaturePlot(SS,features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
-names(l) = unique(genes)
-
-```
-    
-    
-    
-    
-```{r}
-#------cluster_specifique_name
-
-##1celltype
-Idents(SS)="harmony_clusters"
-cluster_name_x=c(
-  "0"  = "Suprabasal Keratinocyte_0" ,
-  "1"  = "Basal Keratinocyte_1"    ,
-  "2"  = "Basal Keratinocyte_2"            ,
-  "3"  = "Mural Cells_3"      ,
-  "4"  = "Fibroblasts_4"    ,
-  "5"  = "Endothelial Cells_5"            ,
-  "6"  = "Fibroblasts_6"          ,
-  "7"  = "Smooth Muscle Cells_7"               ,
-  "8"  = "Endothelial Cells_8"                ,
-  "9"  = "Fibroblasts_9"              ,
-  "10" = "CD4_10"        ,
-  "11" = "Basal Keratinocyte_11"           ,
-  "12" = "Suprabasal Keratinocyte_12"    ,
-  "13" = "Dendritic Cells_13"           ,
-  "14" = "Suprabasal Keratinocyte_14"             ,
-  "15" = "Fibroblasts_15"            ,
-  "16" = "Macrophages_16"          ,         
-  "17" ="Basal Keratinocyte_17"  ,
-  "18" ="Secretory Cells_17"  ,
-  "19" ="Smooth Muscle Cells_19"  ,
-  "20" ="CD8_20"  ,
-  "21" ="Schwann Cells_21"  ,
+#cell type labels
+Idents(SS) <- "harmony_clusters"
+cluster_name_x <- c(
+  "0"  = "Suprabasal Keratinocyte_0",
+  "1"  = "Basal Keratinocyte_1",
+  "2"  = "Basal Keratinocyte_2",
+  "3"  = "Mural Cells_3",
+  "4"  = "Fibroblasts_4",
+  "5"  = "Endothelial Cells_5",
+  "6"  = "Fibroblasts_6",
+  "7"  = "Smooth Muscle Cells_7",
+  "8"  = "Endothelial Cells_8",
+  "9"  = "Fibroblasts_9",
+  "10" = "CD4_10",
+  "11" = "Basal Keratinocyte_11",
+  "12" = "Suprabasal Keratinocyte_12",
+  "13" = "Dendritic Cells_13",
+  "14" = "Suprabasal Keratinocyte_14",
+  "15" = "Fibroblasts_15",
+  "16" = "Macrophages_16",
+  "17" = "Basal Keratinocyte_17",
+  "18" = "Secretory Cells_18",
+  "19" = "Smooth Muscle Cells_19",
+  "20" = "CD8_20",
+  "21" = "Schwann Cells_21",
   "22" = "Suprabasal Keratinocyte_22",
   "23" = "Mast Cells_23",
   "24" = "Melanocytes_24",
   "25" = "Lymphatic Endothelial_25"
- )
+)
 
-SS = RenameIdents(SS, cluster_name_x)
-SS$CellType = Idents(SS)
+SS <- RenameIdents(SS, cluster_name_x)
+SS$CellType <- Idents(SS)
 
 p <- DotPlot(
   SS,
@@ -362,57 +297,47 @@ p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
-#save
 ggsave(filename = "output/SS/SS_cluster_name.pdf", plot = p, width = 14, height = 10)
 
-
 ```
-    
-    
-    
-                       
 
 ```{r}
-
-#------umap-----
-
-##1celltype
-Idents(SS)="harmony_clusters"
-cluster_name=c(
-  "0"  = "Suprabasal Keratinocyte" ,
-  "1"  = "Basal Keratinocyte"    ,
-  "2"  = "Basal Keratinocyte"            ,
-  "3"  = "Mural Cells"      ,
-  "4"  = "Fibroblasts"    ,
-  "5"  = "Endothelial Cells"            ,
-  "6"  = "Fibroblasts"          ,
-  "7"  = "Smooth Muscle Cells"               ,
-  "8"  = "Endothelial Cells"                ,
-  "9"  = "Fibroblasts"              ,
-  "10" = "CD4"        ,
-  "11" = "Basal Keratinocyte"           ,
-  "12" = "Suprabasal Keratinocyte"    ,
-  "13" = "Dendritic Cells"           ,
-  "14" = "Suprabasal Keratinocyte"             ,
-  "15" = "Fibroblasts"            ,
-  "16" = "Macrophages"          ,         
-  "17" ="Basal Keratinocyte"  ,
-  "18" ="Secretory Cells"  ,
-  "19" ="Smooth Muscle Cells"  ,
-  "20" ="CD8"  ,
-  "21" ="Schwann Cells"  ,
+# major cell types
+Idents(SS) <- "harmony_clusters"
+cluster_name <- c(
+  "0"  = "Suprabasal Keratinocyte",
+  "1"  = "Basal Keratinocyte",
+  "2"  = "Basal Keratinocyte",
+  "3"  = "Mural Cells",
+  "4"  = "Fibroblasts",
+  "5"  = "Endothelial Cells",
+  "6"  = "Fibroblasts",
+  "7"  = "Smooth Muscle Cells",
+  "8"  = "Endothelial Cells",
+  "9"  = "Fibroblasts",
+  "10" = "CD4",
+  "11" = "Basal Keratinocyte",
+  "12" = "Suprabasal Keratinocyte",
+  "13" = "Dendritic Cells",
+  "14" = "Suprabasal Keratinocyte",
+  "15" = "Fibroblasts",
+  "16" = "Macrophages",
+  "17" = "Basal Keratinocyte",
+  "18" = "Secretory Cells",
+  "19" = "Smooth Muscle Cells",
+  "20" = "CD8",
+  "21" = "Schwann Cells",
   "22" = "Suprabasal Keratinocyte",
   "23" = "Mast Cells",
   "24" = "Melanocytes",
-  "25" = "Lymphatic Endothelial"  
+  "25" = "Lymphatic Endothelial"
 )
 
-SS=RenameIdents(SS, cluster_name)
-SS$Major_Celltype=Idents(SS)
+SS <- RenameIdents(SS, cluster_name)
+SS$Major_Celltype <- Idents(SS)
 
-##2color
-celltype_cols = c(
- "Basal Keratinocyte"       = "#9467bd",
+celltype_cols <- c(
+  "Basal Keratinocyte"      = "#9467bd",
   "Suprabasal Keratinocyte" = "brown2",
   "Fibroblasts"             = "cyan",
   "Lymphatic Endothelial"   = "mediumorchid1",
@@ -429,8 +354,9 @@ celltype_cols = c(
   "Endothelial Cells"       = "#E31A1C"
 )
 
-colnames(Embeddings(SS, "umap.harmony"))
-##3 center
+# UMAP with a label placed at each cell type's centroid
+library(ggrepel)
+colnames(Embeddings(SS, "umap.harmony")) # check column names (dot in reduction name is stripped)
 umap_df <- as.data.frame(Embeddings(SS, "umap.harmony"))
 umap_df$Major_Celltype <- SS$Major_Celltype
 
@@ -439,8 +365,8 @@ centers <- aggregate(
   data = umap_df,
   FUN = median
 )
-##plot
-fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+
+fig1a <- ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -464,17 +390,9 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
 fig1a
 
 ggsave(filename = "output/SS/SS_CellType.pdf", plot = fig1a, width = 12, height = 10)
-
-
 ```
 
-
-
-
-
 ```{r}
-
-#plot with markers...........
 p <- DotPlot(
   SS,
   features = genes,
@@ -491,145 +409,119 @@ p <- p + theme(
   axis.text.y = element_text(size = 9, face = "bold")
 )
 ggsave(filename = "output/SS/SS_markers.pdf", plot = p, width = 14, height = 8)
-
 ```
 
+## 8. Correlation between cell types
 
-
-
-
-
-
-
-
-
-
-###7Correlation
 ```{r}
-##correlation with the cells
-# 1️⃣ Set identities to cell types
 Idents(SS) <- "Major_Celltype"
+levels(Idents(SS)) # sanity check - should show cell type names, not numbers
 
-# sanity check
-levels(Idents(SS))
-# should show cell type names, NOT numbers
-
-# 2️⃣ Average expression per cell type
 av.expSS <- AverageExpression(
   SS,
   assays = "RNA",
   slot = "data"
 )$RNA
-# rows = genes, columns = cell types
 
-# 3️⃣ Cell-type correlation matrix
 correlation_matrixSS <- cor(
   as.matrix(av.expSS),
   use = "pairwise.complete.obs"
 )
+correlation_matrixSS[is.na(correlation_matrixSS)] <- 0
 
-# safety cleanup
-correlation_matrixSS[is.na(correlation_matrixSS)]=0
-
-# 4️⃣ Save heatmap
 pdf(
   file = "output/SS/SS_correlation.pdf",
   width = 13,
   height = 10
-  
 )
-
+library(pheatmap)
 pheatmap(
   correlation_matrixSS,
   clustering_method = "ward.D2",
   fontsize_row = 9,
   fontsize_col = 9
 )
-
 dev.off()
-
 ```
 
-
-
-###8 Class Major_Celltype with family
+## 9. cell-type grouping (General)
 
 ```{r}
-#-------
-#EXTRACT
 unique(SS$Major_Celltype)
 
 SS$General <- recode(SS$Major_Celltype,
-  "Fibroblasts"                  = "Fibroblasts",
-  " Mast Cells"                  ="Mast Cells",
-  "Schwann Cells"                ="Glial Cells",
-  "Dendritic Cells"              ="Mono/Mac",
-  "Secretory Cells"              ="Epithelial Cells",
-  "Mural Cells"                  ="Mural Cells",
-  "CD8"                          ="CD8",
-  "CD4"                          ="CD4",
-  "Smooth Muscle Cells"          = "Smooth Muscle Cells",
-  "Endothelial Cells"            = "Endothelial Cells",
-  "Lymphatic Endothelial"       = "Endothelial Cells",
-  "Melanocytes"                  = "Melanocytes",
-  "Suprabasal Keratinocyte"      ="Keratinocytes",
-  "Basal Keratinocyte"           ="Keratinocytes",
-  "Macrophages"                  = "Mono/Mac"
+  "Fibroblasts"             = "Fibroblasts",
+  "Mast Cells"              = "Mast Cells",
+  "Schwann Cells"           = "Glial Cells",
+  "Dendritic Cells"         = "Mono/Mac",
+  "Secretory Cells"         = "Epithelial Cells",
+  "Mural Cells"             = "Mural Cells",
+  "CD8"                     = "CD8",
+  "CD4"                     = "CD4",
+  "Smooth Muscle Cells"     = "Smooth Muscle Cells",
+  "Endothelial Cells"       = "Endothelial Cells",
+  "Lymphatic Endothelial"   = "Endothelial Cells",
+  "Melanocytes"             = "Melanocytes",
+  "Suprabasal Keratinocyte" = "Keratinocytes",
+  "Basal Keratinocyte"      = "Keratinocytes",
+  "Macrophages"             = "Mono/Mac"
 )
-  
 ```
 
-
-
+## 10. TLS (tertiary lymphoid structure) marker heatmap
 
 ```{r}
-### TLS markers that we can have in TLS 
+# marker sets per functional group, from genes_TLS.csv
+germinal_center <- c(
+  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
+)
 
+inflammation <- c(
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+  "ICAM1", "VCAM1", "SELE"
+)
 
-# Define markers per group from genes_TLS.csv
-germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
-                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+lymphoid_chemokines <- c(
+  "CXCL13", "CCL21", "CCL19", "CXCL12",
+  "CXCR5", "CCR7", "CXCR4"
+)
 
-inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
-                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
-                  "ICAM1", "VCAM1", "SELE")
+hev <- c(
+  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
+)
 
-lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
-                         "CXCR5", "CCR7", "CXCR4")
+fdc <- c(
+  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+  "CXCL13", "CD54", "ICAM1", "FCER2"
+)
 
-hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
-         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
-
-fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
-         "CXCL13", "CD54", "ICAM1", "FCER2")
-
-# Combine all markers in order
-markers <- unique(c(germinal_center, inflammation, 
-                    lymphoid_chemokines, hev, fdc))
-
-# Filter to genes present in your Seurat object
+markers <- unique(c(
+  germinal_center, inflammation,
+  lymphoid_chemokines, hev, fdc
+))
 markers <- markers[markers %in% rownames(SS)]
 
-# Build group vector in same order
 marker_groups <- case_when(
-  markers %in% germinal_center    ~ "Germinal Center",
-  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% germinal_center     ~ "Germinal Center",
+  markers %in% inflammation        ~ "Inflammation & Cytokines",
   markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
-  markers %in% hev                ~ "HEV",
-  markers %in% fdc                ~ "FDC"
+  markers %in% hev                 ~ "HEV",
+  markers %in% fdc                 ~ "FDC"
 )
 names(marker_groups) <- markers
 
-# Group colors
 group_cols <- c(
-  "Germinal Center"         = "#2166AC",
-  "Inflammation & Cytokines"= "#D6604D",
-  "Lymphoid Chemokines"     = "#35978F",
-  "HEV"                     = "#8073AC",
-  "FDC"                     = "#E08214"
+  "Germinal Center"          = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines"      = "#35978F",
+  "HEV"                      = "#8073AC",
+  "FDC"                      = "#E08214"
 )
 
-# Extract expression and percent data
+# percent of cells expressing each marker, per cell type
 Idents(SS) <- "General"
 DefaultAssay(SS) <- "RNA"
 expr_mat <- GetAssayData(SS, layer = "data")
@@ -640,6 +532,7 @@ percent_mat <- sapply(levels(Idents(SS)), function(ct) {
 })
 percent_mat <- as.matrix(percent_mat)
 
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   SS,
   features = markers,
@@ -651,6 +544,7 @@ avg_exp <- AverageExpression(
 exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 exp_mat[is.infinite(exp_mat)] <- NA
 
+# drop markers with no expression in any cell type
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
@@ -662,11 +556,10 @@ exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# Color function
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Bubble cell function
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -675,7 +568,6 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat_scaled)
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
@@ -688,7 +580,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# Row annotation
 row_ha <- ComplexHeatmap::rowAnnotation(
   Group = marker_groups,
   col = list(Group = group_cols),
@@ -703,7 +594,6 @@ row_ha <- ComplexHeatmap::rowAnnotation(
   )
 )
 
-# Heatmap
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -723,49 +613,36 @@ ht <- ComplexHeatmap::Heatmap(
   row_gap = unit(2, "mm")
 )
 
-pdf("output/SS/TLS_markers.pdf",
-    width = 8, height = 10)
+pdf("output/SS/TLS_markers.pdf", width = 8, height = 10)
 ComplexHeatmap::draw(ht, merge_legend = TRUE)
 dev.off()
-
-
-
 ```
 
-
-
-
-
+## 11. Export for pySCENIC
 
 ```{r}
-
-#pyscenic
-#####for pyscenic 
 expr <- GetAssayData(SS, assay = "RNA", layer = "counts")
 
 writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SS/input/matrix.mtx")
 
 write.table(rownames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SS/input/genes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SS/input/genes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 
 write.table(colnames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SS/input/barcodes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
-
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SS/input/barcodes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 ```
 
+## 12. Save final metadata and processed object
 
-
-
-
-###save the final meta.data
 ```{r}
-
 keep_cols <- c(
   "orig.ident",
   "nCount_RNA",
@@ -779,27 +656,11 @@ keep_cols <- c(
 
 SS@meta.data <- SS@meta.data[, keep_cols]
 
+write.csv(SS@meta.data,
+  file = "data/process/SeuratObjects/SS/SS_obj.metadata.csv",
+  row.names = TRUE
+)
 
-
-# csv
-write.csv(SS@meta.data, 
-          file = "data/process/SeuratObjects/SS/SS_obj.metadata.csv",
-          row.names = TRUE)
-
-##save
 saveRDS(SS, file = "data/process/SeuratObjects/SS/SS_process.rds")
-
-## run it later to load all 
-SS = readRDS("data/process/SeuratObjects/SS/SS_process.rds")
-
-
-
+SS <- readRDS("data/process/SeuratObjects/SS/SS_process.rds")
 ```
-
-
-
-
-
-
-
-

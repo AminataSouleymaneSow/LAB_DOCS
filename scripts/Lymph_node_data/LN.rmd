@@ -3,17 +3,13 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+<!-- Single-cell analysis of Lymph Node data: from raw count matrices to an
+     annotated Seurat object, followed by cell-cell communication (CCC)
+     analysis on the same object. -->
 
+## 1. Packages and setup
 
-
-
-
-######SINGLE CELLS ANALYSIS WITH LYMPH NODES DATA###########
-
-
-```{r,setup, include=FALSE}
-
-##################PACKAGES
+```{r setup, include=FALSE}
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -24,102 +20,70 @@ library(gplots)
 library(cowplot)
 library(BiocManager)
 library(devtools)
- #### the wd
+
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-
 ```
 
-
-
-
 ```{r}
-##packages
-
-library(Seurat)
-library(Matrix)
-library(dplyr)
-library(gprofiler2)
-library(ggplot2)
-library(patchwork)
-library(gplots)
-library(cowplot)
-library(BiocManager)
-library(devtools)
-library(Matrix)
+# additional packages needed for QC and doublet detection
 library(DropletUtils)
-#library(presto)
-library(gprofiler2)
-library(cowplot)
 library(plyr)
 library(scDblFinder)
 library(BiocParallel)
-
 ```
 
+## 2. Load raw data
 
-
-##1.load data
 ```{r}
-###read the data create 
-#read all the data:
-
-m1 = Read10X("data/raw/temp/exp3/m1/MN1")
-m2 = Read10X("data/raw/temp/exp3/m2/MN2")
-m3 = Read10X("data/raw/temp/exp3/m3/MN3")
-m4 = Read10X("data/raw/temp/exp3/m4/MN4")
-m5 = Read10X("data/raw/temp/exp3/m5/MN5")
-m6 = Read10X("data/raw/temp/exp3/m6/MN6")
-m7 = Read10X("data/raw/temp/exp3/m7/MN7")
-m8 = Read10X("data/raw/temp/exp3/m8/MN8")
-m9 = Read10X("data/raw//temp/exp3/m9/MN9")
-
-
+# read the raw count matrices for each sample
+m1 <- Read10X("data/raw/temp/exp3/m1/MN1")
+m2 <- Read10X("data/raw/temp/exp3/m2/MN2")
+m3 <- Read10X("data/raw/temp/exp3/m3/MN3")
+m4 <- Read10X("data/raw/temp/exp3/m4/MN4")
+m5 <- Read10X("data/raw/temp/exp3/m5/MN5")
+m6 <- Read10X("data/raw/temp/exp3/m6/MN6")
+m7 <- Read10X("data/raw/temp/exp3/m7/MN7")
+m8 <- Read10X("data/raw/temp/exp3/m8/MN8")
+m9 <- Read10X("data/raw/temp/exp3/m9/MN9")
 ```
 
+## 3. Create Seurat objects and merge
 
-
-##2.seurat obj
 ```{r}
-# ── 2. Collect into a list ────────────────────────────────────────────────────
 data_list <- list(m1, m2, m3, m4, m5, m6, m7, m8, m9)
 
-# ── 3. Processing function ────────────────────────────────────────────────────
+# build a Seurat object from one sample's matrix: keep real cells only
+# (via defaultDrops) and tag the object with its sample of origin
 process_matrix <- function(mat, sample_name, expected_cells = 5000) {
-  
-  # Handle multimodal data (e.g., GEX + ADT); keep Gene Expression only
+
+  # handle multimodal data (e.g. GEX + ADT); keep Gene Expression only
   if (is.list(mat)) mat <- mat[["Gene Expression"]]
-  
-  # Identify real cells using defaultDrops
-  em   <- defaultDrops(mat, expected = expected_cells)
+
+  # identify real cells using defaultDrops
+  em <- defaultDrops(mat, expected = expected_cells)
   keep <- which(em)
-  
-  # Safety check
-  if (length(keep) == 0)
+
+  if (length(keep) == 0) {
     stop(paste("No cells retained for sample:", sample_name))
-  
-  # Subset to real cells
+  }
+
   mat_filtered <- mat[, keep, drop = FALSE]
-  
-  # Create Seurat object
+
   Obj <- CreateSeuratObject(
     counts       = mat_filtered,
     project      = "Lymph Nodes",
     min.cells    = 3,
     min.features = 200
   )
-  
-  # Track sample origin
   Obj$sample <- sample_name
-  
+
   return(Obj)
 }
 
-# ── 4. Define per-sample expected cell counts ─────────────────────────────────
+# expected number of real cells per sample, used by defaultDrops
 expected_cells_vec <- c(5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000)
-# Adjust each value above based on your actual sample expectations
 
-# ── 5. Process all samples ────────────────────────────────────────────────────
 obj_list <- lapply(
   seq_along(data_list),
   function(i) process_matrix(data_list[[i]],
@@ -128,139 +92,104 @@ obj_list <- lapply(
 )
 names(obj_list) <- paste0("Obj", seq_along(obj_list))
 
-# ── 6. Merge all Seurat objects ───────────────────────────────────────────────
 Obj <- merge(
   x            = obj_list[[1]],
   y            = obj_list[2:length(obj_list)],
-  add.cell.ids = names(obj_list),        # now consistent: "Obj1","Obj2",...
+  add.cell.ids = names(obj_list),
   project      = "LymphNodes"
 )
-saveRDS(Obj,file = "data/process/SeuratObjects/Lymph_data/LN_raw.rds")
 
+saveRDS(Obj, file = "data/process/SeuratObjects/Lymph_data/LN_raw.rds")
 ```
 
+## 4. Quality control
 
-
-##3 qc
 ```{r}
-##quality control:QC
-Obj=PercentageFeatureSet(Obj, col.name = "percent.mt",assay = "RNA", pattern = "^MT-")
-VlnPlot(Obj,features = c("nCount_RNA","nFeature_RNA","percent.mt" ), ncol=3, log= TRUE)
+Obj <- PercentageFeatureSet(Obj, col.name = "percent.mt", assay = "RNA", pattern = "^MT-")
+VlnPlot(Obj, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, log = TRUE)
 
-#filter
-
-Obj=subset(Obj, subset=nFeature_RNA>300 & nFeature_RNA<8000 & percent.mt<10)
-
+# QC thresholds set based on this dataset's own distributions
+Obj <- subset(Obj, subset = nFeature_RNA > 300 & nFeature_RNA < 8000 & percent.mt < 10)
 ```
 
+## 5. Normalization and PCA
 
-
-
-
-
-##4 normalize
 ```{r}
-#Normalize,fvf,pca,scale
-Obj=NormalizeData(Obj, verbose = FALSE)
-Obj=FindVariableFeatures(Obj)
-Obj=ScaleData(Obj, vars.to.regress = c("nCount_RNA", "percent.mt"),features = VariableFeatures(object = Obj))
-Obj=RunPCA(Obj,features = VariableFeatures(object = Obj))
-ElbowPlot(Obj,ndims = 50, reduction = "pca")
-
-
-
+Obj <- NormalizeData(Obj, verbose = FALSE)
+Obj <- FindVariableFeatures(Obj)
+Obj <- ScaleData(Obj, vars.to.regress = c("nCount_RNA", "percent.mt"), features = VariableFeatures(object = Obj))
+Obj <- RunPCA(Obj, features = VariableFeatures(object = Obj))
+ElbowPlot(Obj, ndims = 50, reduction = "pca")
 ```
 
+## 6. Harmony integration and clustering resolutions
 
-
-##5integration
 ```{r}
-
-
-##integration
 library(harmony)
-Obj =RunHarmony(Obj,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
-Obj[["RNA"]]=JoinLayers(Obj[["RNA"]])
-Obj = RunUMAP(Obj, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
-DimPlot(Obj,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
+Obj <- RunHarmony(Obj, group.by.vars = "sample", orig.reduction = "pca", dims.use = 1:30)
+Obj[["RNA"]] <- JoinLayers(Obj[["RNA"]])
+Obj <- RunUMAP(Obj, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+DimPlot(Obj, reduction = "umap.harmony", group.by = c("sample"), label.size = 2, shuffle = TRUE)
 
-
-#for the resolution
-Obj=FindNeighbors(Obj,dims = 1:30)
+# scan a range of resolutions before picking one
+Obj <- FindNeighbors(Obj, dims = 1:30)
 for (res in seq(0.2, 1, by = 0.1)) {
   Obj <- FindClusters(Obj, resolution = res)
   colname <- paste0("res_", res)
   Obj[[colname]] <- Obj$seurat_clusters
 }
+
 res_cols <- grep("^res_", colnames(Obj@meta.data), value = TRUE)
 for (res in res_cols) {
   p <- DimPlot(Obj, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+    ggtitle(paste("Resolution:", res))
   print(p)
-  readline(prompt="Press [Enter] to see the next resolution...")
 }
 
-#save 
-p_res04=DimPlot(Obj,group.by = "res_0.4",label = TRUE,reduction = "umap.harmony" ) + ggtitle("Resolution: 0.4") +
-  labs(x = "UMAP.h", 
-        y = "UMAP.h")
-ggsave(filename = "output/Lymph_node/resolution.pdf",plot = p_res04,width = 10,height = 8,dpi = 300)
-
-
-
+# resolution 0.4 was chosen for downstream clustering
+p_res04 <- DimPlot(Obj, group.by = "res_0.4", label = TRUE, reduction = "umap.harmony") +
+  ggtitle("Resolution: 0.4") +
+  labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/Lymph_node/resolution.pdf", plot = p_res04, width = 10, height = 8, dpi = 300)
 ```
 
+## 7. Clustering and marker genes
 
-
-
-###5-clusters and find all markers
 ```{r}
-###clusters
+Obj <- FindNeighbors(Obj, reduction = "harmony", dims = 1:30)
+Obj <- FindClusters(Obj, resolution = 0.4, cluster.name = "harmony_clusters")
 
-Obj=FindNeighbors(Obj,reduction = "harmony",dims = 1:30)
-Obj=FindClusters(Obj, resolution = 0.4,cluster.name = "harmony_clusters")
-#markers
-Obj_markers=FindAllMarkers(Obj,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
-Obj_markers = Obj_markers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
-
-
+# markers per cluster, used below to name the cell types
+Obj_markers <- FindAllMarkers(Obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+Obj_markers <- Obj_markers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 ```
 
+## 8. Cell type annotation
 
-
-###6. annotation
 ```{r}
-
-
-library(dplyr)
 library(openxlsx)
 
-# Get all clusters
 clusters <- unique(Obj_markers$cluster)
 
-# List to store top 30 genes per cluster
+# top 30 marker genes per cluster, by log fold-change
 top_genes_list <- list()
-
-# Loop over clusters
-for(clust in clusters){
+for (clust in clusters) {
   top_genes <- Obj_markers %>%
     filter(cluster == clust) %>%
-    arrange(desc(avg_log2FC)) %>%   # sort by log fold-change
-    slice_head(n = 30) %>%          # take top 30
-    pull(gene)                      # get gene names
-  
+    arrange(desc(avg_log2FC)) %>%
+    slice_head(n = 30) %>%
+    pull(gene)
+
   top_genes_list[[paste0("cluster_", clust)]] <- top_genes
 }
 
-# Print top 30 per cluster
-for(clust in names(top_genes_list)){
+for (clust in names(top_genes_list)) {
   cat("=== ", clust, " ===\n")
   print(top_genes_list[[clust]])
   cat("\n")
 }
 
-# Combine into a table for Excel
+# combine into one table, one column per cluster
 top_genes_df <- data.frame(
   matrix(
     NA,
@@ -270,60 +199,55 @@ top_genes_df <- data.frame(
   )
 )
 
-for(i in seq_along(clusters)){
+for (i in seq_along(clusters)) {
   clust <- clusters[i]
   genes <- top_genes_list[[paste0("cluster_", clust)]]
   top_genes_df[1:length(genes), i] <- genes
 }
-
-
-
-
 ```
 
-
 ```{r}
+# curated marker genes for lymph node stromal, endothelial and immune cell types
 genes <- c(
   # Endothelial - Arterial EC
   "SEMA3G", "HEY1", "ACE",
-  
+
   # Endothelial - Capillary EC
   "CA4", "RGCC", "CD36", "PLVAP", "CD300LG",
-  
+
   # Endothelial - Venous EC
   "ACKR1", "MADCAM1", "CH25H", "SELE", "SELP", "VCAM1",
-  
+
   # LEC - bLEC (boundary)
   "ACKR4", "SERPINE1", "BMP2",
-  
+
   # LEC - fLEC (floor)
   "CXCL5", "MARCO", "MFAP4",
-  
+
   # LEC - msLEC (mantle sinus)
   "PTX3", "STAB2", "LYVE1",
-  
+
   # LEC - Valve
   "CLDN11", "GJA4", "PROX1",
-  
+
   # Stromal - Adventitial SC (advSC)
   "FBN1", "PCOLCE2", "CD34", "PI16", "DCN",
-  
+
   # Stromal - ATG SC
   "APOE", "APOC1", "AGT", "LPL", "APOD",
-  
+
   # Stromal - TRC (T cell zone Reticular)
   "CCL19", "CCL21", "CCL8", "CXCL13", "ICAM1",
-  
+
   # Stromal - Pericytes (PC)
   "RGS5", "NOTCH3", "ACTA2", "PDGFRB", "MCAM",
-  
+
   # Stromal - Smooth Muscle Cells (SMC)
   "MYH11", "TAGLN", "MYL9", "CNN1", "ACTG2",
-  
+
   # Stromal - Fibroblasts
   "SFRP2", "SFRP4", "MFAP5", "SVEP1", "FBLN1",
-  
-  
+
   # Cytotoxic T CD8
   "CD3D", "CD8A", "CD8B", "GZMK",
 
@@ -341,34 +265,19 @@ genes <- c(
 
   # Plasma
   "JCHAIN", "IGLL5",
-  
+
   # Dendritic
   "CD1C", "PLD4", "CLEC9A", "FCER1A"
-  
-  
 )
-
 ```
 
-
-
 ```{r}
-###use genes to see the expression
-
-FeaturePlot(Obj, features = c(), combine = F, order = T, reduction = "umap.harmony")
-
-
-
+# use the marker genes to check expression on the UMAP
+FeaturePlot(Obj, features = genes, combine = FALSE, order = TRUE, reduction = "umap.harmony")
 ```
 
-
-
-
-
 ```{r}
-##plots 
-
-p=DotPlot(
+p <- DotPlot(
   Obj,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -381,27 +290,20 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "harmony_clusters"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
 
-
 ggsave(filename = "output/Lymph_node/LN_cluster.pdf", plot = p, width = 15, height = 10)
-
 ```
 
-
-
-
-
 ```{r}
-## 1. Get cluster identities as characters
-Idents(Obj)="harmony_clusters"
-
-## 2. Define mapping from cluster number → cell type
+# map cluster numbers to cell type labels
+Idents(Obj) <- "harmony_clusters"
 cluster_name <- c(
   "0"  = "Fibroblasts",
   "1"  = "Endothelial Cells",
@@ -415,7 +317,7 @@ cluster_name <- c(
   "9"  = "Fibroblasts",
   "10" = "CD8",
   "11" = "Fibroblasts",
-  "12" =  "Smooth Muscle Cells",
+  "12" = "Smooth Muscle Cells",
   "13" = "Endothelial Cells",
   "14" = "CD4",
   "15" = "Mono/Mac",
@@ -425,11 +327,10 @@ cluster_name <- c(
   "19" = "Endothelial Cells"
 )
 
+Obj <- RenameIdents(Obj, cluster_name)
+Obj$General <- Idents(Obj)
 
-Obj=RenameIdents(Obj, cluster_name)
-Obj$General=Idents(Obj)
-
-p=DotPlot(
+p <- DotPlot(
   Obj,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -442,43 +343,31 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "General") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "General"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
 
-
-
-#View(T1D@meta.data)
-ggsave(filename = "output/Lymph_node/LN_cluster_name.pdf", plot=p, width = 15, height = 10)
-
-
-
+ggsave(filename = "output/Lymph_node/LN_cluster_name.pdf", plot = p, width = 15, height = 10)
 ```
 
-
-
 ```{r}
-#-------------
-
-##2color
-celltype_cols = c(
-  "Fibroblasts"                 = "cyan",
-  "CD8"                         = "tomato",
-  "CD4"                         = "olivedrab2",
-  "Mono/Mac"                    = "darkblue",
-  "Endothelial Cells"           = "#E31A1C",
-  "Plasma Cells"                = "paleturquoise3",
-  "Mural Cells"                 = "#1F78B4",
-  "B Cells"                     = "gold",
-  "Smooth Muscle Cells"         ="lightpink2"
+celltype_cols <- c(
+  "Fibroblasts"           = "cyan",
+  "CD8"                   = "tomato",
+  "CD4"                   = "olivedrab2",
+  "Mono/Mac"              = "darkblue",
+  "Endothelial Cells"     = "#E31A1C",
+  "Plasma Cells"          = "paleturquoise3",
+  "Mural Cells"           = "#1F78B4",
+  "B Cells"               = "gold",
+  "Smooth Muscle Cells"   = "lightpink2"
 )
-##3 center
-colnames(Embeddings(Obj, "umap.harmony"))
 
-##3 center
+# UMAP with a label placed at each cell type's centroid
 umap_df <- as.data.frame(Embeddings(Obj, "umap.harmony"))
 umap_df$General <- Obj$General
 
@@ -487,9 +376,9 @@ centers <- aggregate(
   data = umap_df,
   FUN = median
 )
+
 library(ggrepel)
-##plot
-fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = General)) +
+fig1a <- ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = General)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -511,51 +400,33 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = General)) +
   ) +
   labs(x = "UMAP.h", y = "UMAP.h")
 
-ggsave(ggsave(filename = "output/Lymph_node/CellType.pdf", plot = fig1a, width = 12, height = 10))
-
+ggsave(filename = "output/Lymph_node/CellType.pdf", plot = fig1a, width = 12, height = 10)
 ```
 
+## 9. Marker expression heatmap
 
 ```{r}
-
-#####for markers
-# Identity
-
+# bubble heatmap: dot size = percent of cells expressing, color = scaled expression
 Idents(Obj) <- "General"
-
-
 Obj$General <- gsub("-", "_", Obj$General)
 Idents(Obj) <- "General"
-
-
-# Expression matrix
 
 DefaultAssay(Obj) <- "RNA"
 expr_mat <- GetAssayData(Obj, layer = "data")
 
-
-# genes in list
-
 genes <- genes[genes %in% rownames(expr_mat)]
 if (length(genes) < 2) stop("Too few genes found")
 
-
-# Cell
-
 celltypes <- levels(factor(Idents(Obj)))
 
-
-# Percent expression
-
+# percent of cells expressing each marker, per cell type
 percent_mat <- sapply(celltypes, function(ct) {
   cells <- WhichCells(Obj, idents = ct)
   Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
 percent_mat <- as.matrix(percent_mat)
 
-
-# Average expression
-
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   Obj,
   features = genes,
@@ -563,21 +434,15 @@ avg_exp <- AverageExpression(
   layer = "data",
   return.seurat = FALSE
 )$RNA
-
-
 colnames(avg_exp) <- gsub("-", "_", colnames(avg_exp))
 
-
-# Align
 common_ct <- intersect(celltypes, colnames(avg_exp))
 if (length(common_ct) < 2) stop("Cell type mismatch still exists")
 
 percent_mat <- percent_mat[, common_ct, drop = FALSE]
 exp_mat <- as.matrix(avg_exp[genes, common_ct, drop = FALSE])
 
-
-#Clean
-
+# clean and scale
 exp_mat[is.infinite(exp_mat)] <- NA
 exp_mat <- exp_mat[rowSums(is.na(exp_mat)) < ncol(exp_mat), , drop = FALSE]
 percent_mat <- percent_mat[rownames(exp_mat), , drop = FALSE]
@@ -585,28 +450,20 @@ percent_mat <- percent_mat[rownames(exp_mat), , drop = FALSE]
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
 
-
-# Scaling
-
 exp_mat_scaled <- log1p(exp_mat)
-
 if (all(exp_mat_scaled == 0)) stop("No expression signal")
 
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-
-# Color
-
+# color scale
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95), na.rm = TRUE)
 q <- unique(as.numeric(q))
 q <- q[is.finite(q)]
-
 if (length(q) < 2) q <- range(exp_mat_scaled, na.rm = TRUE)
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-
-# dot
+# custom cell function drawing a dot per cluster/gene combination
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -615,13 +472,9 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-
-# Cell colors
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(common_ct))
-
 names(cols) <- common_ct
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -630,8 +483,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-
-# plot
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -646,24 +497,14 @@ ht <- ComplexHeatmap::Heatmap(
   row_km = 4
 )
 
-
-# save
-pdf("output/Lymph_node/heatmap.pdf",
-    width = 12, height = 12)
-
+pdf("output/Lymph_node/heatmap.pdf", width = 12, height = 12)
 ComplexHeatmap::draw(ht)
 dev.off()
-
-
 ```
 
-
-
-
-
+## 10. Save processed Seurat object
 
 ```{r}
-##save
 keep_cols <- c(
   "orig.ident",
   "nCount_RNA",
@@ -672,72 +513,48 @@ keep_cols <- c(
   "sample",
   "harmony_clusters",
   "General"
-  
 )
-
 Obj@meta.data <- Obj@meta.data[, keep_cols]
-saveRDS(Obj, file="data/process/SeuratObjects/Lymph_data/LN_process.rds")
-Obj=readRDS("data/process/SeuratObjects/Lymph_data/LN_process.rds")
-#load it
 
-
+saveRDS(Obj, file = "data/process/SeuratObjects/Lymph_data/LN_process.rds")
+Obj <- readRDS("data/process/SeuratObjects/Lymph_data/LN_process.rds")
 ```
 
-
-
-
-
-
-
-----------------------------___________________----------------------------------------------------------------------------
-#################STEP3: CELL-CELL COMMUNICATION ########################################################
-
-----------------------------------------________________----------------------------------------------------
-
-
-
+## 11. Cell-cell communication setup
 
 ```{r}
-
 suppressMessages({
-    library(dplyr, quietly = TRUE)
-    library(tidyr, quietly = TRUE)
-    library(purrr, quietly = TRUE)
-    library(forcats, quietly = TRUE)
-    library(textshape, quietly = TRUE)
-    library(ggpubr, quietly = TRUE)
-    library(rstatix, quietly = TRUE)
-    library(reshape2, quietly = TRUE)
-    library(tibble, quietly = TRUE)
+  library(dplyr, quietly = TRUE)
+  library(tidyr, quietly = TRUE)
+  library(purrr, quietly = TRUE)
+  library(forcats, quietly = TRUE)
+  library(textshape, quietly = TRUE)
+  library(ggpubr, quietly = TRUE)
+  library(rstatix, quietly = TRUE)
+  library(reshape2, quietly = TRUE)
+  library(tibble, quietly = TRUE)
 
-    library(scater, quietly = TRUE)
-    library(scuttle, quietly = TRUE)
+  library(scater, quietly = TRUE)
+  library(scuttle, quietly = TRUE)
 
-    library(ggplot2, quietly = TRUE)
+  library(ggplot2, quietly = TRUE)
 
-    library(liana, quietly = TRUE)
-    library(decoupleR, quietly = TRUE)
-     library("ExperimentHub")
-   c2c <- reticulate::import(module = "cell2cell")
+  library(liana, quietly = TRUE)
+  library(decoupleR, quietly = TRUE)
+  library("ExperimentHub")
+  c2c <- reticulate::import(module = "cell2cell")
 })
 
-##load the seurat obj and put it in SingleCellExperiment format
-LN = readRDS("data/process/SeuratObjects/Lymph_data/LN_process.rds")
+# load the processed Seurat object and convert to SingleCellExperiment
+LN <- readRDS("data/process/SeuratObjects/Lymph_data/LN_process.rds")
 sce <- as.SingleCellExperiment(LN)
-saveRDS(sce,file = "data/process/SeuratObjects/Lymph_data/sce_raw.rds")
-
-
+saveRDS(sce, file = "data/process/SeuratObjects/Lymph_data/sce_raw.rds")
 ```
 
-
-
-##2QC
+## 12. Quality control (SingleCellExperiment)
 
 ```{r}
-
-
-
-#check the threshold before
+# check the threshold before filtering
 hist(
   colSums(counts(sce) > 0),
   breaks = 100,
@@ -750,17 +567,14 @@ sce <- scater::addPerCellQC(sce)
 min.features <- 500
 min.cells <- 5
 
-qc <- scater::perCellQCMetrics(sce)
 sce <- sce[rowSums(counts(sce) >= 1) >= min.cells, ]
 sce <- sce[, colSums(counts(sce) >= 1) >= min.features]
 
-
-#mt
+# mitochondrial percentage
 is.mito <- grep("MT-", rownames(sce))
-per.cell <- scuttle::perCellQCMetrics(sce, subsets=list(Mito=is.mito))
-colData(sce)[['subsets_Mito_percent']] <- per.cell$subsets_Mito_percent
+per.cell <- scuttle::perCellQCMetrics(sce, subsets = list(Mito = is.mito))
+colData(sce)[["subsets_Mito_percent"]] <- per.cell$subsets_Mito_percent
 
-class(colData(sce)$subsets_Mito_percent)
 hist(
   colData(sce)$subsets_Mito_percent,
   breaks = 100,
@@ -768,68 +582,55 @@ hist(
   xlab = "Percent mitochondrial reads"
 )
 sce <- sce[, colData(sce)$subsets_Mito_percent < 15]
-#rm(RA)
-
 ```
 
+## 13. Normalization (SingleCellExperiment)
 
-##3Normalization
 ```{r}
-#---
 scale.factor <- 1e4
 lib.sizes <- colSums(counts(sce)) / scale.factor
-assay(sce, 'logcounts') <- scuttle::normalizeCounts(sce, size.factors=lib.sizes, log=FALSE, center.size.factors=FALSE)
-assay(sce, 'logcounts') <- log1p(assay(sce, 'logcounts'))
+assay(sce, "logcounts") <- scuttle::normalizeCounts(sce, size.factors = lib.sizes, log = FALSE, center.size.factors = FALSE)
+assay(sce, "logcounts") <- log1p(assay(sce, "logcounts"))
 head(colData(sce))
-
 ```
 
-
+## 14. Cell-cell communication analysis (LIANA)
 
 ```{r}
-#-----run liliana
-liana_res <- liana_bysample( sce = sce,
-                      sample_col = "sample", # context dimension column from SCE metadata
-                      idents_col = "General", # cell types column from SCE metadata
-                      resource = 'Consensus',
-                      expr_prop = 0.1, # must be expressed in expr_prop fraction of cells
-                      min_cells = 5,
-                      assay.type = 'logcounts', # run on log- and library-normalized counts
-                      aggregate_how = 'both', # aggregate magnitude and specificity
-                      verbose = TRUE,
-                      inplace = FALSE, #save it out of the sce obj
-                      permutation.params=list(nperms=100),
-                      return_all=TRUE
-                      )
-#we convert to data frame 
+liana_res <- liana_bysample(
+  sce = sce,
+  sample_col = "sample", # context dimension column from SCE metadata
+  idents_col = "General", # cell types column from SCE metadata
+  resource = "Consensus",
+  expr_prop = 0.1, # must be expressed in expr_prop fraction of cells
+  min_cells = 5,
+  assay.type = "logcounts", # run on log- and library-normalized counts
+  aggregate_how = "both", # aggregate magnitude and specificity
+  verbose = TRUE,
+  inplace = FALSE, # keep result separate from the sce object
+  permutation.params = list(nperms = 100),
+  return_all = TRUE
+)
 
-names(liana_res) <- unique(colData(sce)$sample) #all sample name 
-library(dplyr)
-liana_res <-bind_rows(liana_res, .id = "sample")
+# convert list of per-sample results into one data frame
+names(liana_res) <- unique(colData(sce)$sample)
+liana_res <- bind_rows(liana_res, .id = "sample")
 liana_res$sample <- as.character(liana_res$sample)
 table(liana_res$sample)
 write.csv(liana_res, file = "CCC/Lymph_node/liana_res.csv", row.names = FALSE)
 
-
-# Filter strong interactions
-
+# filter for strong, significant interactions
 liana_filt <- liana_res %>%
-  filter(magnitude_rank <= 0.05,
-         cellphonedb.pvalue <= 0.01)
-  table(liana_filt$sample)   
-  write.csv(liana_filt, file = "CCC/Lymph_node/liana_filt.csv", row.names = FALSE)
-  #
-  
+  filter(
+    magnitude_rank <= 0.05,
+    cellphonedb.pvalue <= 0.01
+  )
+table(liana_filt$sample)
+write.csv(liana_filt, file = "CCC/Lymph_node/liana_filt.csv", row.names = FALSE)
 ```
 
-
-
+## 15. Save processed SCE object
 
 ```{r}
-#--save sce obj
-saveRDS(sce, file="data/process/SeuratObjects/Lymph_data/sce_processed.rds")
-#---read
-
+saveRDS(sce, file = "data/process/SeuratObjects/Lymph_data/sce_processed.rds")
 ```
-
-

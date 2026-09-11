@@ -1,15 +1,17 @@
 ---
-title: "R Notebook"
+title: "Sjogren's Disease - Processing and Annotation"
 output: html_notebook
 ---
 
-###Sjogrens Diseases############
+<!-- Step 2: Seurat processing for Sjogren's Disease - cleans and annotates
+     the CD45-negative and CD45-positive compartments (annotated upstream
+     by Tomas Gomes) separately, then merges them into one combined Seurat
+     object. The cell-cell communication (CCC) analysis is a separate step,
+     in SjD.sce.Rmd. -->
 
+## 1. Packages and setup
 
-##packages
 ```{r setup, include=FALSE}
-
-
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -23,32 +25,23 @@ library(devtools)
 
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-
 ```
 
-###################################################################################
+# CD45-negative compartment
 
-                      ###STEP_1Analysis for the CD45 NEGATIVE#############
+## 2. Load CD45-negative object
 
-##1-load the obj CD45 negative
 ```{r}
-#-----
-
-cd45neg=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45neg_annotated_clean.RDS")
+cd45neg <- readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45neg_annotated_clean.RDS")
 DefaultAssay(cd45neg)
-#DefaultAssay(cd45neg) <- "RNA"
-#colnames(cd45neg@meta.data)
- #cd45neg<- DietSeurat(cd45neg, assays = "RNA")
 Assays(cd45neg)
 
 View(cd45neg@meta.data)
-
-
 ```
 
+## 3. Clean metadata and annotation labels
 
 ```{r}
-#------modify the meta data
 keep_cols <- c(
   "orig.ident",
   "sample_name",
@@ -61,20 +54,12 @@ keep_cols <- c(
   "specific_annot_subcl"
 )
 cd45neg@meta.data <- cd45neg@meta.data[, keep_cols]
-# Rename column (only if needed)
+
 colnames(cd45neg@meta.data)[colnames(cd45neg@meta.data) == "major_annot"] <- "Major_Celltype"
-cd45neg$orig.ident= "SjD"
-colnames(cd45neg@meta.data)[colnames(cd45neg@meta.data) == "SjD"] <- "orig.ident"
+cd45neg$orig.ident <- "SjD"
 colnames(cd45neg@meta.data)[colnames(cd45neg@meta.data) == "sample_name"] <- "sample"
 
-
-
-```
-
-
-```{r}
-
-# Clean Major annotation
+# clean major annotation labels
 cd45neg@meta.data$Major_Celltype <- dplyr::recode(
   cd45neg@meta.data$Major_Celltype,
   "Fibroblasts" = "Fibroblasts",
@@ -86,7 +71,7 @@ cd45neg@meta.data$Major_Celltype <- dplyr::recode(
   "Ductal_cells" = "Ductal Cells"
 )
 
-# Create General annotation
+# coarser "General" annotation grouping epithelial subtypes together
 cd45neg@meta.data$General <- dplyr::recode(
   cd45neg@meta.data$Major_Celltype,
   "Fibroblasts" = "Fibroblasts",
@@ -98,21 +83,15 @@ cd45neg@meta.data$General <- dplyr::recode(
   "Ductal Cells" = "Epithelial Cells"
 )
 
-
-## remove the single mis-annotated cell
+# remove the single mis-annotated cell and drop the now-empty factor level
 cd45neg <- subset(cd45neg, subset = Major_Celltype != "Immune Cells")
-
-## drop the now-empty factor level so it doesn't show up in the legend/plot
 cd45neg$Major_Celltype <- droplevels(as.factor(cd45neg$Major_Celltype))
-
-## confirm it's gone
 table(cd45neg$Major_Celltype)
-
-
-
-
 ```
 
+cd45neg carries two annotation levels: `Major_Celltype` (broad) and `specific_annot` (fine-grained). Both are explored below.
+
+## 4. UMAP by major cell type
 
 ```{r}
 umap_df <- as.data.frame(Embeddings(cd45neg, "umap_h"))
@@ -162,28 +141,21 @@ suppressWarnings({
 
 fig_sjd
 ggsave(filename = "output/SjD/cd45neg_cellType.png", plot = fig_sjd, width = 12, height = 8)
-
 ```
 
-
-
-
-
-
-We have two type of cell_annotattion the :major_annot and specif_annot(look for colnames(cd45neg@meta.data) to see the colnames)
-
-
-###process for the Major Celltype#####
-
-###2 Annotation 
-
+## 5. Major cell type marker heatmap
 
 ```{r}
+markers <- c(
+  "PTPRC", "MZB1", "PRDM1", "CCL19", "VCAM1", "CXCL10", "TNFSF13B", "CXCL9", "ICAM1", "SPARC",
+  "COL3A1", "DCN", "LUM", "COL14A1", "DPT", "PECAM1", "CD34", "PDGFRB", "DLL4", "EFNB2",
+  "SOX17", "SOX18", "EPHB4", "ACKR1", "NR2F2", "ZNF385D", "MEOX1", "LYVE1", "PROX1", "HES1",
+  "ACTA2", "MCAM", "RGS5", "ABCC9", "CCL21", "TNC", "CD36", "MYH11", "NGFR", "CDH3",
+  "TP63", "DLK1", "CFTR", "ASCL3", "FOXI1", "AQP5", "KRT5", "KRT14", "SOX2", "MUC19",
+  "LPO", "FGFR2", "MUC1", "MUC5B", "ANO1", "KIT", "PIP"
+)
 
-#markers________________
-markers <- c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
-
-DefaultAssay(cd45neg) <- "SCT"   # make sure rownames check below is against SCT, not RNA
+DefaultAssay(cd45neg) <- "SCT"
 markers <- markers[markers %in% rownames(cd45neg)]
 
 Idents(cd45neg) <- "Major_Celltype"
@@ -201,7 +173,7 @@ avg_exp <- AverageExpression(
   assays = "SCT",
   layer = "data",
   return.seurat = FALSE
-)$SCT   # <-- fixed: was $RNA, but you requested assays = "SCT"
+)$SCT
 
 exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 exp_mat[is.infinite(exp_mat)] <- NA
@@ -238,7 +210,7 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-set.seed(42)   # row_km uses k-means, which is stochastic — set a seed for reproducibility
+set.seed(42) # row_km uses k-means (stochastic), seed for reproducibility
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -253,59 +225,44 @@ ht <- ComplexHeatmap::Heatmap(
   row_km = 4
 )
 
-dir.create("output/SjD/cd45neg", recursive = TRUE, showWarnings = FALSE)  # avoids "cannot open file" if the folder doesn't exist yet
+dir.create("output/SjD/cd45neg", recursive = TRUE, showWarnings = FALSE)
 png("output/SjD/Major_Celltype_heatmap.png",
-    width = 3200, height = 3500, res = 300)
+  width = 3200, height = 3500, res = 300
+)
 ComplexHeatmap::draw(ht)
 dev.off()
-
 ```
 
+## 6. Correlation between major cell types
 
-
-
-
-
-
-
-
-
-
-
-###4correlation between celltype
 ```{r}
-#
-
-#average expression
-agg.exp = AggregateExpression( cd45neg,assays = "RNA",layers = "counts", group.by = "Major_Celltype")$RNA
+agg.exp <- AggregateExpression(cd45neg, assays = "RNA", layers = "counts", group.by = "Major_Celltype")$RNA
 dim(agg.exp)
 colnames(agg.exp)
- #correlation 
-agg.exp.mat = as.matrix(agg.exp)
-agg.exp.mat = log1p(agg.exp.mat)
 
-cor_mat = cor(
+agg.exp.mat <- as.matrix(agg.exp)
+agg.exp.mat <- log1p(agg.exp.mat)
+
+cor_mat <- cor(
   agg.exp.mat,
   method = "pearson",
   use = "pairwise.complete.obs"
 )
+cor_mat[is.na(cor_mat)] <- 0
 
-cor_mat[is.na(cor_mat)] = 0
-
-#avoid error
+# tiny jitter to avoid a degenerate (all-equal) correlation matrix
 set.seed(1)
-cor_mat = cor_mat + matrix(
+cor_mat <- cor_mat + matrix(
   runif(length(cor_mat), 1e-8, 1e-7),
   nrow = nrow(cor_mat)
 )
- #save 
+
 png(
   filename = "output/SjD/Major_correlation.png",
   width = 3000,
   height = 2600,
   res = 300
 )
-#plot
 library(pheatmap)
 pheatmap(
   cor_mat,
@@ -317,39 +274,31 @@ pheatmap(
   border_color = NA
 )
 dev.off()
-
-
 ```
 
-
-
-
-
-
-########        ####process for the specific_annotation#####
-specific_annot
-
-##1annotation
-
-
+## 7. Specific annotation marker heatmap
 
 ```{r}
-
-#markers________________
-genes <- c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
+genes <- c(
+  "PTPRC", "MZB1", "PRDM1", "CCL19", "VCAM1", "CXCL10", "TNFSF13B", "CXCL9", "ICAM1", "SPARC",
+  "COL3A1", "DCN", "LUM", "COL14A1", "DPT", "PECAM1", "CD34", "PDGFRB", "DLL4", "EFNB2",
+  "SOX17", "SOX18", "EPHB4", "ACKR1", "NR2F2", "ZNF385D", "MEOX1", "LYVE1", "PROX1", "HES1",
+  "ACTA2", "MCAM", "RGS5", "ABCC9", "CCL21", "TNC", "CD36", "MYH11", "NGFR", "CDH3",
+  "TP63", "DLK1", "CFTR", "ASCL3", "FOXI1", "AQP5", "KRT5", "KRT14", "SOX2", "MUC19",
+  "LPO", "FGFR2", "MUC1", "MUC5B", "ANO1", "KIT", "PIP"
+)
 
 cd45neg[["RNA"]] <- JoinLayers(cd45neg[["RNA"]])
 
-# confirm RNA has a normalized "data" layer before pulling from it
 if (!"data" %in% Layers(cd45neg[["RNA"]])) {
   cd45neg <- NormalizeData(cd45neg, assay = "RNA")
 }
 
-genes <- genes[genes %in% rownames(cd45neg[["RNA"]])]   # filter against RNA specifically, not whatever DefaultAssay is set to
+genes <- genes[genes %in% rownames(cd45neg[["RNA"]])]
 
 Idents(cd45neg) <- "specific_annot"
-cd45neg$specific_annot <- droplevels(as.factor(cd45neg$specific_annot))  # drop any leftover unused levels (e.g. from the removed Immune Cells)
-Idents(cd45neg) <- "specific_annot"  # re-set after droplevels
+cd45neg$specific_annot <- droplevels(as.factor(cd45neg$specific_annot))
+Idents(cd45neg) <- "specific_annot"
 
 expr_mat <- LayerData(cd45neg, assay = "RNA", layer = "data")
 
@@ -405,7 +354,7 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-set.seed(42)   # row_km uses k-means (stochastic) — seed for reproducibility
+set.seed(42)
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -429,29 +378,18 @@ png(
 )
 ComplexHeatmap::draw(ht)
 dev.off()
-
-
 ```
 
-
-
-
-
-
-
-
-
-
-##markers that we can have in TLS 
+## 8. TLS marker heatmap
 
 ```{r}
 tls <- c(
-  "AID","AICDA","BCL6","PAX5","MYC","IRF8","CD40LG","ICOS","S1PR2","CXCR4","CXCR5","CCR7",
-  "TNF","IL1B","IL6","IL7","IL8","IL12","IL17","IFNG","TGFB",
-  "CCL2","CCL3","CCL4","CCL5","CXCL12","CXCL13","CCL19","CCL21",
-  "ICAM1","VCAM1","SELE","CD54","MADCAM1","CHST4","GLYCAM1","FUT7","CHST2",
-  "MEOX2","TSPAN7","ANKRD43","ZNF280C","CD21","CD23","CR1","CR2","CD35",
-  "FDCSP","FCER2","NTAN1"
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8", "CD40LG", "ICOS", "S1PR2", "CXCR4", "CXCR5", "CCR7",
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB",
+  "CCL2", "CCL3", "CCL4", "CCL5", "CXCL12", "CXCL13", "CCL19", "CCL21",
+  "ICAM1", "VCAM1", "SELE", "CD54", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C", "CD21", "CD23", "CR1", "CR2", "CD35",
+  "FDCSP", "FCER2", "NTAN1"
 )
 
 genes <- tls[tls %in% rownames(cd45neg)]
@@ -465,7 +403,6 @@ percent_mat <- sapply(levels(Idents(cd45neg)), function(ct) {
   cells <- WhichCells(cd45neg, idents = ct)
   Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
-
 percent_mat <- as.matrix(percent_mat)
 
 avg_exp <- AverageExpression(
@@ -477,16 +414,13 @@ avg_exp <- AverageExpression(
 )$RNA
 
 common <- intersect(colnames(percent_mat), colnames(avg_exp))
-
 exp_mat <- as.matrix(avg_exp[genes, common, drop = FALSE])
 percent_mat <- percent_mat[genes, common, drop = FALSE]
 
 exp_mat[is.infinite(exp_mat)] <- NA
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
-
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
-
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
 
@@ -495,7 +429,6 @@ exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
-
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
 cell_fun <- function(j, i, x, y, w, h, fill) {
@@ -507,11 +440,9 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
 }
 
 celltypes <- colnames(exp_mat_scaled)
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(celltypes))
-
 names(cols) <- celltypes
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -540,65 +471,50 @@ png(
   height = 3500,
   res = 300
 )
-
 ComplexHeatmap::draw(ht)
-
 dev.off()
-
 ```
 
-
-
-
-
-
-
+## 9. UMAP by specific annotation
 
 ```{r}
-#-----------------
-## plot for annotations
-## 1 for the specific annotation
 Idents(cd45neg) <- "specific_annot"
 cd45neg$celltype <- Idents(cd45neg)
 
-# color for specific annotation
 celltype_cols <- c(
-  "VSMC"                                    = "#D73027",
-  "Capillary pericytes"                     = "#4575B4",
-  "Immunopericytes"                         = "#1B9E77",
-  "Neuronal cells"                          = "#762A83",
-  "Endothelial Progenitors"                 = "#FDAE61",
-  "Arterial Endothelial"                    = "#E7298A",
-  "Lymphatic Endothelial cells"             = "#66A61E",
-  "CCL14 Venous Endothelial"                = "#E6AB02",
-  "Venous Endothelial"                      = "#A6761D",
-  "Fibroblasts_3"                           = "#666666",
-  "Fibroblasts_4"                           = "#1F78B4",
-  "Serous Acinar Epithelial cells"          = "#B2DF8A",
-  "Intercalated Ductal Epithelial cells"    = "#33A02C",
-  "Seromucous Acinar Epithelial cells"      = "#FB9A99",
-  "Striated Ductal Epithelial cells"        = "#E31A1C",
-  "Basal Epithelial cells"                  = "#FDBF6F",
-  "Mucous Acinar Epithelial cells"          = "#FF7F00",
-  "Epithelial Progenitor cells"             = "#CAB2D6",
-  "Ionocytes"                               = "#6A3D9A",
-  "Myoepithelial cells"                     = "#B15928",
-  "Fibroblasts_1"                           = "#8DA0CB",
-  "Fibroblasts_2"                           = "#66C2A5",
-  "Fibroblasts_5"                           = "#FC8D62",
-  "SPARC+ COL3A1 + Fibroblasts"             = "#E78AC3"
+  "VSMC"                                 = "#D73027",
+  "Capillary pericytes"                  = "#4575B4",
+  "Immunopericytes"                      = "#1B9E77",
+  "Neuronal cells"                       = "#762A83",
+  "Endothelial Progenitors"              = "#FDAE61",
+  "Arterial Endothelial"                 = "#E7298A",
+  "Lymphatic Endothelial cells"          = "#66A61E",
+  "CCL14 Venous Endothelial"             = "#E6AB02",
+  "Venous Endothelial"                   = "#A6761D",
+  "Fibroblasts_3"                        = "#666666",
+  "Fibroblasts_4"                        = "#1F78B4",
+  "Serous Acinar Epithelial cells"       = "#B2DF8A",
+  "Intercalated Ductal Epithelial cells" = "#33A02C",
+  "Seromucous Acinar Epithelial cells"   = "#FB9A99",
+  "Striated Ductal Epithelial cells"     = "#E31A1C",
+  "Basal Epithelial cells"               = "#FDBF6F",
+  "Mucous Acinar Epithelial cells"       = "#FF7F00",
+  "Epithelial Progenitor cells"          = "#CAB2D6",
+  "Ionocytes"                            = "#6A3D9A",
+  "Myoepithelial cells"                  = "#B15928",
+  "Fibroblasts_1"                        = "#8DA0CB",
+  "Fibroblasts_2"                        = "#66C2A5",
+  "Fibroblasts_5"                        = "#FC8D62",
+  "SPARC+ COL3A1 + Fibroblasts"          = "#E78AC3"
 )
 
-## sanity checks before plotting
 setdiff(unique(cd45neg$specific_annot), names(celltype_cols))
 Reductions(cd45neg)
 
-## umap
-umap_df <- as.data.frame(Embeddings(cd45neg, "umap_h"))   # use "umap_h" for consistency with the Major_Celltype plot; swap back to "umap" if that's intentional
+umap_df <- as.data.frame(Embeddings(cd45neg, "umap_h"))
 colnames(umap_df) <- c("umap_1", "umap_2")
 umap_df$specific_annot <- cd45neg$specific_annot
 
-## centers
 centers <- aggregate(cbind(umap_1, umap_2) ~ specific_annot, data = umap_df, FUN = median)
 
 library(ggrepel)
@@ -631,88 +547,33 @@ fig
 
 dir.create("output/SjD/cd45neg", recursive = TRUE, showWarnings = FALSE)
 ggsave("output/SjD/SjD_specific_UMAP.png", plot = fig, width = 12, height = 8)
-
 ```
 
+## 10. Save CD45-negative object
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##save
 ```{r}
-#save
-
 saveRDS(cd45neg, file = "data/process/SeuratObjects/SjD/cd45(-).rds")
 
-#load later
-cd45neg <- readRDS("data/process/SeuratObjects/SjD/cd45neg.rds")
-
+# reload to confirm the save
+cd45neg <- readRDS("data/process/SeuratObjects/SjD/cd45(-).rds")
 View(cd45neg@meta.data)
-
-
 ```
 
+# CD45-positive compartment
 
+## 11. Load CD45-positive object
 
-
-
-
-
-
-
-#####------------------------#################------------------------------------____----------------------------------------------- 
-
-###STEP_2_Analysis for the CD45 Positive######################################################
-
-#####----------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-####For  major_annot_joint#####
-##1 load the data annotation for
 ```{r}
-#---load the data
-cd45pos=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45pos_annotated_clean.RDS")
-
-
+cd45pos <- readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/SjD/cd45pos_annotated_clean.RDS")
 
 DefaultAssay(cd45pos)
-#DefaultAssay(cd45pos) <- "RNA"
 colnames(cd45pos@meta.data)
- #cd45pos<- DietSeurat(cd45pos, assays = "RNA")
 View(cd45pos@meta.data)
-
-
 ```
 
+## 12. Clean metadata and annotation labels
 
 ```{r}
-#------modify the meta data
 keep_cols <- c(
   "orig.ident",
   "sample_name",
@@ -727,76 +588,57 @@ keep_cols <- c(
   "specific_annot"
 )
 cd45pos@meta.data <- cd45pos@meta.data[, keep_cols]
-# Rename column (only if needed)
+
 colnames(cd45pos@meta.data)[colnames(cd45pos@meta.data) == "major_annot_joint"] <- "Major_Celltype"
-cd45pos$orig.ident= "SjD"
-colnames(cd45pos@meta.data)[colnames(cd45pos@meta.data) == "SjD"] <- "orig.ident"
+cd45pos$orig.ident <- "SjD"
 colnames(cd45pos@meta.data)[colnames(cd45pos@meta.data) == "sample_name"] <- "sample"
 
-
-
-
-
-
-# Clean Major annotation
-
+# clean major annotation labels
 cd45pos@meta.data$Major_Celltype <- dplyr::recode(
   cd45pos@meta.data$Major_Celltype,
-  "Mono/Mac" = "Mono/Mac",
-   "gd/NK"    ="NK Cells",
-   "B cells"      ="B Cells",
-   "Proliferating cells"= "Proliferating Cells",
-  "CD8" = "CD8",
-  "Plasma cells" ="Plasma Cells",
-  "CD4"       ="CD4"       
+  "Mono/Mac"            = "Mono/Mac",
+  "gd/NK"               = "NK Cells",
+  "B cells"             = "B Cells",
+  "Proliferating cells" = "Proliferating Cells",
+  "CD8"                 = "CD8",
+  "Plasma cells"        = "Plasma Cells",
+  "CD4"                 = "CD4"
 )
 
-# Create General annotation
+# coarser "General" annotation
 cd45pos@meta.data$General <- dplyr::recode(
   cd45pos@meta.data$Major_Celltype,
-  "Mono/Mac" = "Mono/Mac",
-   "gd/NK"    ="NK Cells",
-   "B Cells"      ="B Cells",
-   "Proliferating_cells"= "Proliferating Cells",
-  "CD8" = "CD8",
-  "Plasma Cells" ="Plasma Cells",
-  "CD4"       ="CD4" 
+  "Mono/Mac"             = "Mono/Mac",
+  "gd/NK"                = "NK Cells",
+  "B Cells"              = "B Cells",
+  "Proliferating Cells"  = "Proliferating Cells",
+  "CD8"                  = "CD8",
+  "Plasma Cells"         = "Plasma Cells",
+  "CD4"                  = "CD4"
 )
 
 unique(cd45pos$Major_Celltype)
-
-
 ```
 
-
-
-
-###2annotation for Major_Celltype
-
+## 13. Major cell type marker heatmap
 
 ```{r}
-#marker__________________________
-#to see col to plot 
-
-
-markers = c(
-  "ZG16B","IGHM","IGHD","CCR7","GPR183","TEX9","MYC","KLF6","MIR155HG","ITGB1",
-  "FOXP1","BACH2","CLEC9A","WDFY4","IRF8","CLEC4C","THBD","BATF3","CD1C",
-  "FCER1A","FCGR3A","CD14","CX3CR1","CD163","CD36","FCGR1A","MERTK","CD80",
-  "ZEB2","LAMP3","MRC1","SIRPA","CLEC10A","C1QA","IL1B","IGHA1","IGHG1",
-  "IGHG3","IGHG4","TNF","NCAM1","NKG7","CD27","TRDC","KLRG1","FXYD7","KIT",
-  "AHR","FGFBP2","FCRL6","CD8A","CD8B","MYB","SELL","TOX","IKZF2","HAVCR2",
-  "CTLA4","ZNF683","ITGAE","CXCR6","CCL4L2","CCL4","CCL3","PRDM1","IFNG",
-  "CD69","CCR6","XCL1","XCL2","CCL20","CLEC2B","NR4A1","HSPA6","BAG3",
-  "GZMH","LGALS1","LEF1","TCF7","ANXA2","CD44","GZMA","CCL5","DLGAP1",
-  "RORA","RORC","IL17A","FOXP3","CCR8","TIGIT","TNFRSF9","IL7R","CXCR5",
-  "BCL6","SH2D1A","MAF","CXCL13","IL21","IL2RG","ITGA4","ITGB7"
+markers <- c(
+  "ZG16B", "IGHM", "IGHD", "CCR7", "GPR183", "TEX9", "MYC", "KLF6", "MIR155HG", "ITGB1",
+  "FOXP1", "BACH2", "CLEC9A", "WDFY4", "IRF8", "CLEC4C", "THBD", "BATF3", "CD1C",
+  "FCER1A", "FCGR3A", "CD14", "CX3CR1", "CD163", "CD36", "FCGR1A", "MERTK", "CD80",
+  "ZEB2", "LAMP3", "MRC1", "SIRPA", "CLEC10A", "C1QA", "IL1B", "IGHA1", "IGHG1",
+  "IGHG3", "IGHG4", "TNF", "NCAM1", "NKG7", "CD27", "TRDC", "KLRG1", "FXYD7", "KIT",
+  "AHR", "FGFBP2", "FCRL6", "CD8A", "CD8B", "MYB", "SELL", "TOX", "IKZF2", "HAVCR2",
+  "CTLA4", "ZNF683", "ITGAE", "CXCR6", "CCL4L2", "CCL4", "CCL3", "PRDM1", "IFNG",
+  "CD69", "CCR6", "XCL1", "XCL2", "CCL20", "CLEC2B", "NR4A1", "HSPA6", "BAG3",
+  "GZMH", "LGALS1", "LEF1", "TCF7", "ANXA2", "CD44", "GZMA", "CCL5", "DLGAP1",
+  "RORA", "RORC", "IL17A", "FOXP3", "CCR8", "TIGIT", "TNFRSF9", "IL7R", "CXCR5",
+  "BCL6", "SH2D1A", "MAF", "CXCL13", "IL21", "IL2RG", "ITGA4", "ITGB7"
 )
 
 markers <- markers[markers %in% rownames(cd45pos)]
-#cd45pos[["RNA"]]=JoinLayers(cd45pos[["RNA"]])
 Idents(cd45pos) <- "Major_Celltype"
-
 
 expr_mat <- LayerData(cd45pos, assay = "RNA", layer = "data")
 
@@ -818,10 +660,8 @@ exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 
 exp_mat[is.infinite(exp_mat)] <- NA
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
-
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
-
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
 
@@ -841,11 +681,9 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
 }
 
 celltypes <- colnames(exp_mat_scaled)
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(celltypes))
-
 names(cols) <- celltypes
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -869,40 +707,28 @@ ht <- ComplexHeatmap::Heatmap(
 )
 
 png("output/SjD/cd45pos/Major_Celltype_heatmap.png",
-    width = 3200, height = 3500, res = 300)
-
+  width = 3200, height = 3500, res = 300
+)
 ComplexHeatmap::draw(ht)
-
 dev.off()
-
-
 ```
 
-
-
-
-
-
-
+## 14. UMAP by major cell type
 
 ```{r}
-##plot for annotations
-#1for the major annotation
+Idents(cd45pos) <- "Major_Celltype"
+cd45pos$Major_Celltype <- Idents(cd45pos)
 
-Idents(cd45pos)="Major_Celltype"
-cd45pos$Major_Celltype=Idents(cd45pos)  
-
-#color for major annotation
-celltype_cols=c(
-"B Cells"                       = "magenta",
-"CD8"                           = "#FC8D62",
-"CD4"                           = "#1B9E77",
-"NK Cells"                      = "darkblue",
-"Plasma Cells"                  = "#FDAE61",
-"Proliferating Cells"           = "yellow",
-"Mono/Mac"                      = "red3"
+celltype_cols <- c(
+  "B Cells"             = "magenta",
+  "CD8"                 = "#FC8D62",
+  "CD4"                 = "#1B9E77",
+  "NK Cells"            = "darkblue",
+  "Plasma Cells"        = "#FDAE61",
+  "Proliferating Cells" = "yellow",
+  "Mono/Mac"            = "red3"
 )
-#umap
+
 names(cd45pos@reductions)
 Reductions(cd45pos)
 umap_df <- as.data.frame(Embeddings(cd45pos, "umap"))
@@ -910,7 +736,8 @@ colnames(umap_df) <- c("umap_1", "umap_2")
 umap_df$Major_Celltype <- cd45pos$Major_Celltype
 
 centers <- aggregate(cbind(umap_1, umap_2) ~ Major_Celltype,
-                     data = umap_df, FUN = median)
+  data = umap_df, FUN = median
+)
 
 library(ggplot2)
 library(ggrepel)
@@ -940,47 +767,38 @@ fig_major <- ggplot(umap_df, aes(umap_1, umap_2, color = Major_Celltype)) +
 
 fig_major
 
-ggsave("output/SjD/cd45pos/Major_heatmap.png", plot = fig_major, width =12, height = 8 )
-
+ggsave("output/SjD/cd45pos/Major_heatmap.png", plot = fig_major, width = 12, height = 8)
 ```
 
+## 15. Correlation between major cell types
 
-
-
-###4correlation between celltype
 ```{r}
-#
-
-#average expression
-agg.exp = AggregateExpression( cd45pos,assays = "RNA",layers = "counts", group.by = "Major_Celltype")$RNA
+agg.exp <- AggregateExpression(cd45pos, assays = "RNA", layers = "counts", group.by = "Major_Celltype")$RNA
 dim(agg.exp)
 colnames(agg.exp)
- #correlation 
-agg.exp.mat = as.matrix(agg.exp)
-agg.exp.mat = log1p(agg.exp.mat)
 
-cor_mat = cor(
+agg.exp.mat <- as.matrix(agg.exp)
+agg.exp.mat <- log1p(agg.exp.mat)
+
+cor_mat <- cor(
   agg.exp.mat,
   method = "pearson",
   use = "pairwise.complete.obs"
 )
+cor_mat[is.na(cor_mat)] <- 0
 
-cor_mat[is.na(cor_mat)] = 0
-
-#avoid error
 set.seed(1)
-cor_mat = cor_mat + matrix(
+cor_mat <- cor_mat + matrix(
   runif(length(cor_mat), 1e-8, 1e-7),
   nrow = nrow(cor_mat)
 )
- #save 
+
 png(
   filename = "output/SjD/cd45pos/Major_correlation.png",
   width = 3000,
   height = 2600,
   res = 300
 )
-#plot
 library(pheatmap)
 pheatmap(
   cor_mat,
@@ -992,43 +810,30 @@ pheatmap(
   border_color = NA
 )
 dev.off()
-
-
 ```
 
+## 16. Specific annotation marker heatmap
 
-
-
-
-
-
-
-
-
-######"specific_annot" in cd45positive#########################
-
-
-
-    
-
-
-
-#1annotation
 ```{r}
-###
-markers <- c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
+markers <- c(
+  "PTPRC", "MZB1", "PRDM1", "CCL19", "VCAM1", "CXCL10", "TNFSF13B", "CXCL9", "ICAM1", "SPARC",
+  "COL3A1", "DCN", "LUM", "COL14A1", "DPT", "PECAM1", "CD34", "PDGFRB", "DLL4", "EFNB2",
+  "SOX17", "SOX18", "EPHB4", "ACKR1", "NR2F2", "ZNF385D", "MEOX1", "LYVE1", "PROX1", "HES1",
+  "ACTA2", "MCAM", "RGS5", "ABCC9", "CCL21", "TNC", "CD36", "MYH11", "NGFR", "CDH3",
+  "TP63", "DLK1", "CFTR", "ASCL3", "FOXI1", "AQP5", "KRT5", "KRT14", "SOX2", "MUC19",
+  "LPO", "FGFR2", "MUC1", "MUC5B", "ANO1", "KIT", "PIP"
+)
 
-cd45pos[["RNA"]] <- JoinLayers(cd45pos[["RNA"]])   # uncommented — needed if RNA has split layers (multiple samples); safe no-op if it doesn't
+cd45pos[["RNA"]] <- JoinLayers(cd45pos[["RNA"]])
 
-# confirm RNA has a normalized "data" layer before pulling from it
 if (!"data" %in% Layers(cd45pos[["RNA"]])) {
   cd45pos <- NormalizeData(cd45pos, assay = "RNA")
 }
 
-markers <- markers[markers %in% rownames(cd45pos[["RNA"]])]   # check against RNA specifically, not whatever DefaultAssay happens to be
+markers <- markers[markers %in% rownames(cd45pos[["RNA"]])]
 
 Idents(cd45pos) <- "specific_annot"
-cd45pos$specific_annot <- droplevels(as.factor(cd45pos$specific_annot))  # drop any unused levels
+cd45pos$specific_annot <- droplevels(as.factor(cd45pos$specific_annot))
 Idents(cd45pos) <- "specific_annot"
 
 expr_mat <- LayerData(cd45pos, assay = "RNA", layer = "data")
@@ -1085,7 +890,7 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-set.seed(42)   # row_km uses k-means (stochastic) — seed for reproducibility
+set.seed(42)
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -1109,92 +914,75 @@ png(
 )
 ComplexHeatmap::draw(ht)
 dev.off()
-
-
-
 ```
 
+## 17. UMAP by specific annotation
 
-
-
-
-
-
-
-###1annotation
 ```{r}
+Idents(cd45pos) <- "specific_annot"
+cd45pos$celltype <- Idents(cd45pos)
 
-##plot for annotations
-#1for the major annotation
-
-Idents(cd45pos)="specific_annot"
-cd45pos$celltype=Idents(cd45pos)  
-
-#color for major annotation
-celltype_cols = c(
-  "Activated Treg cells"                   = "#E76F51",
-  "CD16+ NK cells"                         = "#F4A261",
-  "CD27+ NK cells"                         = "#E9C46A",
-  "CD56+ NK cells"                         = "#D4A373",
-  "CD62L+ TPEx"                            = "#CDB4DB",
-  "CD8+ Tcm"                               = "#90DBF4",
-  "CD8+ Tem"                               = "#48CAE4",
-  "CD8+ Trm"                               = "#0096C7",
-  "cDC1"                                   = "#A3B18A",
-  "cDC2"                                   = "#588157",
-  "Cytotoxic Th cells"                     = "#6A994E",
-  "DLGAP1+ Th cells"                       = "#A7C957",
-  "Exhausted CD8+ T cells"                 = "#6D597A",
-  "Exhausted IEG CD8+ T cells"             = "#B56576",
-  "GC B cells_1"                           = "#4CC9F0",
-  "GC B cells_2"                           = "#4895EF",
-  "GC B cells_3"                           = "#4361EE",
-  "GC B cells_4"                           = "#3A0CA3",
-  "gd-T cells"                             = "#2A9D8F",
-  "IgA Plasma cells"                       = "#F72585",
-  "IgG1 Plasma cells"                      = "#FF7096",
-  "IgG3/4 Plasma cells"                    = "#FF8FAB",
-  "IgM Plasma cells"                       = "#FFC2D1",
-  "ILCs"                                   = "#52B788",
-  "Infiltrating CD8+ T cells"              = "#1B9AAA",
-  "Inflammatory CD8+ T cells"              = "#0077B6",
-  "inflammatory cDC2"                      = "#6C757D",
-  "LAMP3+ cDCs"                            = "#ADB5BD",
-  "LTB+ Th17 cells"                        = "#9D4EDD",
-  "M1 Macrophages"                         = "#E63946",
-  "M2 Macrophages"                         = "#A8DADC",
-  "Memory Th cells"                        = "#457B9D",
-  "Migrating Th17 cells"                   = "#5E60CE",
-  "Mo-DC"                                  = "#7400B8",
-  "Monocytes"                              = "#B5179E",
-  "Naive B cells"                          = "#F1FAEE",
-  "Naive CD8+ T cells"                     = "#8ECAE6",
-  "Naive Tfh cells"                        = "#219EBC",
-  "Naive Th cells"                         = "#023047",
-  "Proliferating cells"                    = "#FFBE0B",
-  "Recruited Activated CD8-"               = "#FB5607",
-  "Recruiting Effector CD8+"               = "#FF006E",
-  "Resting Treg cells"                     = "#8338EC",
-  "Secretory Tph cells"                    = "#3A86FF",
-  "TNF+ Plasma cells"                      = "#D00000",
-  "Tph17"                                  = "#9B2226"
+celltype_cols <- c(
+  "Activated Treg cells"       = "#E76F51",
+  "CD16+ NK cells"              = "#F4A261",
+  "CD27+ NK cells"              = "#E9C46A",
+  "CD56+ NK cells"              = "#D4A373",
+  "CD62L+ TPEx"                 = "#CDB4DB",
+  "CD8+ Tcm"                    = "#90DBF4",
+  "CD8+ Tem"                    = "#48CAE4",
+  "CD8+ Trm"                    = "#0096C7",
+  "cDC1"                        = "#A3B18A",
+  "cDC2"                        = "#588157",
+  "Cytotoxic Th cells"          = "#6A994E",
+  "DLGAP1+ Th cells"            = "#A7C957",
+  "Exhausted CD8+ T cells"      = "#6D597A",
+  "Exhausted IEG CD8+ T cells"  = "#B56576",
+  "GC B cells_1"                = "#4CC9F0",
+  "GC B cells_2"                = "#4895EF",
+  "GC B cells_3"                = "#4361EE",
+  "GC B cells_4"                = "#3A0CA3",
+  "gd-T cells"                  = "#2A9D8F",
+  "IgA Plasma cells"            = "#F72585",
+  "IgG1 Plasma cells"           = "#FF7096",
+  "IgG3/4 Plasma cells"         = "#FF8FAB",
+  "IgM Plasma cells"            = "#FFC2D1",
+  "ILCs"                        = "#52B788",
+  "Infiltrating CD8+ T cells"   = "#1B9AAA",
+  "Inflammatory CD8+ T cells"   = "#0077B6",
+  "inflammatory cDC2"           = "#6C757D",
+  "LAMP3+ cDCs"                 = "#ADB5BD",
+  "LTB+ Th17 cells"             = "#9D4EDD",
+  "M1 Macrophages"              = "#E63946",
+  "M2 Macrophages"              = "#A8DADC",
+  "Memory Th cells"             = "#457B9D",
+  "Migrating Th17 cells"        = "#5E60CE",
+  "Mo-DC"                       = "#7400B8",
+  "Monocytes"                   = "#B5179E",
+  "Naive B cells"               = "#F1FAEE",
+  "Naive CD8+ T cells"          = "#8ECAE6",
+  "Naive Tfh cells"             = "#219EBC",
+  "Naive Th cells"              = "#023047",
+  "Proliferating cells"         = "#FFBE0B",
+  "Recruited Activated CD8-"    = "#FB5607",
+  "Recruiting Effector CD8+"    = "#FF006E",
+  "Resting Treg cells"          = "#8338EC",
+  "Secretory Tph cells"         = "#3A86FF",
+  "TNF+ Plasma cells"           = "#D00000",
+  "Tph17"                       = "#9B2226"
 )
 
- #umap
-#umap
 names(cd45pos@reductions)
 Reductions(cd45pos)
 umap_df <- as.data.frame(Embeddings(cd45pos, "umap"))
 colnames(umap_df) <- c("umap_1", "umap_2")
-umap_df$specific_annot<- cd45pos$specific_annot
+umap_df$specific_annot <- cd45pos$specific_annot
 
-#center
-centers=aggregate(cbind(umap_1, umap_2) ~ specific_annot,data = umap_df,FUN = median)
-  
+centers <- aggregate(cbind(umap_1, umap_2) ~ specific_annot, data = umap_df, FUN = median)
+
 library(ggrepel)
 library(ggplot2)
 
-fig=ggplot(umap_df, aes(umap_1, umap_2, color = specific_annot)) +
+fig <- ggplot(umap_df, aes(umap_1, umap_2, color = specific_annot)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -1216,21 +1004,23 @@ fig=ggplot(umap_df, aes(umap_1, umap_2, color = specific_annot)) +
     legend.position = "none"
   ) +
   labs(x = "UMAP 1", y = "UMAP 2")
+
 fig
 
-ggsave("output/SjD/cd45pos/Specific_UMAP.png", plot = fig, width =12, height = 8 )
-
+ggsave("output/SjD/cd45pos/Specific_UMAP.png", plot = fig, width = 12, height = 8)
 ```
 
-
-
-##markers that we can have in TLS 
+## 18. TLS marker heatmap
 
 ```{r}
-#----------
 tls <- c(
-  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8","CD40LG", "ICOS","S1PR2", "CXCR4", "CXCR5", "CCR7","TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB","CCL2", "CCL3", "CCL4", "CCL5","CXCL12", "CXCL13", "CCL19", "CCL21","ICAM1", "VCAM1", "SELE", "CD54","MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2","MEOX2", "TSPAN7", "ANKRD43", "ZNF280C","CD21", "CD23", "CR1", "CR2", "CD35","FDCSP", "FCER2", "NTAN1")
-
+  "AID", "AICDA", "BCL6", "PAX5", "MYC", "IRF8", "CD40LG", "ICOS", "S1PR2", "CXCR4", "CXCR5", "CCR7",
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB",
+  "CCL2", "CCL3", "CCL4", "CCL5", "CXCL12", "CXCL13", "CCL19", "CCL21",
+  "ICAM1", "VCAM1", "SELE", "CD54", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C", "CD21", "CD23", "CR1", "CR2", "CD35",
+  "FDCSP", "FCER2", "NTAN1"
+)
 
 genes <- tls[tls %in% rownames(cd45pos)]
 
@@ -1243,7 +1033,6 @@ percent_mat <- sapply(levels(Idents(cd45pos)), function(ct) {
   cells <- WhichCells(cd45pos, idents = ct)
   Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
-
 percent_mat <- as.matrix(percent_mat)
 
 avg_exp <- AverageExpression(
@@ -1255,16 +1044,13 @@ avg_exp <- AverageExpression(
 )$RNA
 
 common <- intersect(colnames(percent_mat), colnames(avg_exp))
-
 exp_mat <- as.matrix(avg_exp[genes, common, drop = FALSE])
 percent_mat <- percent_mat[genes, common, drop = FALSE]
 
 exp_mat[is.infinite(exp_mat)] <- NA
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
-
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
-
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
 
@@ -1273,7 +1059,6 @@ exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
-
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
 cell_fun <- function(j, i, x, y, w, h, fill) {
@@ -1285,11 +1070,9 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
 }
 
 celltypes <- colnames(exp_mat_scaled)
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(celltypes))
-
 names(cols) <- celltypes
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -1318,51 +1101,39 @@ png(
   height = 3500,
   res = 300
 )
-
 ComplexHeatmap::draw(ht)
-
 dev.off()
-
-
 ```
 
+## 19. Correlation between specific annotations
 
-
-###3correlation between cell_types
 ```{r}
-#---
-
-#average expression
-agg.exp = AggregateExpression( cd45pos,assays = "RNA",layers = "counts", group.by = "specific_annot")$RNA
+agg.exp <- AggregateExpression(cd45pos, assays = "RNA", layers = "counts", group.by = "specific_annot")$RNA
 dim(agg.exp)
 colnames(agg.exp)
- #correlation 
-agg.exp.mat = as.matrix(agg.exp)
-agg.exp.mat = log1p(agg.exp.mat)
 
-cor_mat = cor(
+agg.exp.mat <- as.matrix(agg.exp)
+agg.exp.mat <- log1p(agg.exp.mat)
+
+cor_mat <- cor(
   agg.exp.mat,
   method = "pearson",
   use = "pairwise.complete.obs"
 )
+cor_mat[is.na(cor_mat)] <- 0
 
-cor_mat[is.na(cor_mat)] = 0
-
-#avoid error
 set.seed(1)
-cor_mat = cor_mat + matrix(
+cor_mat <- cor_mat + matrix(
   runif(length(cor_mat), 1e-8, 1e-7),
   nrow = nrow(cor_mat)
 )
- #save 
+
 png(
   filename = "output/SjD/cd45pos/Specific_correlation.png",
   width = 3600,
   height = 3600,
   res = 300
 )
-#plot
-#plot
 library(pheatmap)
 pheatmap(
   cor_mat,
@@ -1374,56 +1145,25 @@ pheatmap(
   border_color = NA
 )
 dev.off()
-
 ```
 
+# Merge and combined annotation
+
+## 20. Save CD45-positive object and merge compartments
 
 ```{r}
-#pyscenic
-#####for pyscenic 
-expr <- GetAssayData(SjD, assay = "RNA", layer = "counts")
-
-writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/matrix.mtx")
-
-write.table(rownames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/genes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
-
-write.table(colnames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/barcodes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
-
-```
-
-
-
-
-
-
-
-
-###save
-```{r}
-
 saveRDS(cd45pos, file = "data/process/SeuratObjects/SjD/cd45(+).rds")
 
-
-## load cd45pos
 cd45pos <- readRDS("data/process/SeuratObjects/SjD/cd45(+).rds")
 cd45neg <- readRDS("data/process/SeuratObjects/SjD/cd45(-).rds")
-## set orig.ident to "SjD" on both objects
+
 cd45neg$orig.ident <- "SjD"
 cd45pos$orig.ident <- "SjD"
 
-## tag compartment of origin before merging (so you can still tell them apart afterward)
+# tag compartment of origin before merging
 cd45neg$compartment <- "CD45neg"
 cd45pos$compartment <- "CD45pos"
 
-## merge, leaving RNA as-is
 SjD <- merge(
   cd45neg, y = cd45pos,
   add.cell.ids = c("CD45neg", "CD45pos"),
@@ -1431,25 +1171,49 @@ SjD <- merge(
 )
 
 saveRDS(SjD, file = "data/process/SeuratObjects/SjD/SjD(+).rds")
-SjD=readRDS("data/process/SeuratObjects/SjD/SjD(+).rds")
-
-
+SjD <- readRDS("data/process/SeuratObjects/SjD/SjD(+).rds")
 ```
 
-
+## 21. Export merged object for pyscenic (SCENIC) input
 
 ```{r}
+SjD[["RNA"]] <- JoinLayers(SjD[["RNA"]]) # merge leaves per-compartment layers split
 
+expr <- GetAssayData(SjD, assay = "RNA", layer = "counts")
 
-#table(SjD$specific_annot)
+writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/matrix.mtx")
 
-#DefaultAssay(SjD) <- "SCT"
-#SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])   # safe no-op if already joined
+write.table(rownames(expr),
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/genes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 
-markers <- c("PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT","PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1","ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR","CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP")
-#markers <- markers[markers %in% rownames(SjD[["SCT"]])]
+write.table(colnames(expr),
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/SjD/input/barcodes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
 
+## 22. Major cell type dot plot for cluster naming
 
+```{r}
+markers <- c(
+  "PTPRC", "MZB1", "PRDM1", "CCL19", "VCAM1", "CXCL10", "TNFSF13B", "CXCL9", "ICAM1", "SPARC",
+  "COL3A1", "DCN", "LUM", "COL14A1", "DPT", "PECAM1", "CD34", "PDGFRB", "DLL4", "EFNB2",
+  "SOX17", "SOX18", "EPHB4", "ACKR1", "NR2F2", "ZNF385D", "MEOX1", "LYVE1", "PROX1", "HES1",
+  "ACTA2", "MCAM", "RGS5", "ABCC9", "CCL21", "TNC", "CD36", "MYH11", "NGFR", "CDH3",
+  "TP63", "DLK1", "CFTR", "ASCL3", "FOXI1", "AQP5", "KRT5", "KRT14", "SOX2", "MUC19",
+  "LPO", "FGFR2", "MUC1", "MUC5B", "ANO1", "KIT", "PIP"
+)
+
+DefaultAssay(SjD) <- "SCT"
+SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])
+
+markers <- markers[markers %in% rownames(SjD[["SCT"]])]
 
 Idents(SjD) <- "specific_annot"
 SjD$specific_annot <- droplevels(as.factor(SjD$specific_annot))
@@ -1467,25 +1231,19 @@ p <- DotPlot(
     axis.text.y = element_text(size = 9, face = "bold")
   )
 
-pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/SjD/SjD_cluster_name.pdf", 
-    width = 13, height = 13)
+pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/SjD/SjD_cluster_name.pdf",
+  width = 13, height = 13
+)
 print(p)
 dev.off()
-
-
-        
-       
-      
-           
-
 ```
 
-
+## 23. UMAP for merged object
 
 ```{r}
-names(SjD@reductions)   # confirm what's available, e.g. "pca" "harmony" "umap"
+names(SjD@reductions)
 SjD <- RunUMAP(SjD, reduction = "pca", dims = 1:30, seed.use = 42)
-names(SjD@reductions)   # should now show "pca" "umap"
+names(SjD@reductions)
 SjD$Major_Celltype <- droplevels(as.factor(SjD$Major_Celltype))
 
 celltype_cols_SjD <- c(
@@ -1508,7 +1266,6 @@ setdiff(unique(SjD$Major_Celltype), names(celltype_cols_SjD))
 
 umap_df <- as.data.frame(Embeddings(SjD, "umap"))
 colnames(umap_df) <- c("UMAP_1", "UMAP_2")
-
 umap_df$Major_Celltype <- SjD$Major_Celltype
 
 centers <- aggregate(
@@ -1547,36 +1304,30 @@ suppressWarnings({
 
 fig_sjd
 
-
-pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/SjD/SjD_CellType.pdf", 
-    width = 12,  
-    height = 10)
+pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/SjD/SjD_CellType.pdf",
+  width = 12,
+  height = 10
+)
 print(fig_sjd)
 dev.off()
-  
-
 ```
 
-
-
+## 24. Major cell type marker heatmap
 
 ```{r}
-#markers________________
 markers <- c(
-  # general / stromal / epithelial (as before)
-  "PTPRC","MZB1","PRDM1","CCL19","VCAM1","CXCL10","TNFSF13B","CXCL9","ICAM1","SPARC","COL3A1","DCN","LUM","COL14A1","DPT",
-  "PECAM1","CD34","PDGFRB","DLL4","EFNB2","SOX17","SOX18","EPHB4","ACKR1","NR2F2","ZNF385D","MEOX1","LYVE1","PROX1","HES1",
-  "ACTA2","MCAM","RGS5","ABCC9","CCL21","TNC","CD36","MYH11","NGFR",
-  "CDH3","TP63","DLK1","CFTR","ASCL3","FOXI1","AQP5","KRT5","KRT14","SOX2","MUC19","LPO","FGFR2","MUC1","MUC5B","ANO1","KIT","PIP",
+  # general / stromal / epithelial
+  "PTPRC", "MZB1", "PRDM1", "CCL19", "VCAM1", "CXCL10", "TNFSF13B", "CXCL9", "ICAM1", "SPARC", "COL3A1", "DCN", "LUM", "COL14A1", "DPT",
+  "PECAM1", "CD34", "PDGFRB", "DLL4", "EFNB2", "SOX17", "SOX18", "EPHB4", "ACKR1", "NR2F2", "ZNF385D", "MEOX1", "LYVE1", "PROX1", "HES1",
+  "ACTA2", "MCAM", "RGS5", "ABCC9", "CCL21", "TNC", "CD36", "MYH11", "NGFR",
+  "CDH3", "TP63", "DLK1", "CFTR", "ASCL3", "FOXI1", "AQP5", "KRT5", "KRT14", "SOX2", "MUC19", "LPO", "FGFR2", "MUC1", "MUC5B", "ANO1", "KIT", "PIP",
   # immune-specific additions for CD4/CD8/B/Mono-Mac/NK/Plasma/Proliferating
-  "CD3D","CD3E","CD4","CD8A","CD8B","IL7R","CCR7","MS4A1","CD19","CD79A",
-  "CD14","CD68","CD163","LYZ","FCGR3A","GNLY","NKG7","KLRD1","MKI67","TOP2A"
+  "CD3D", "CD3E", "CD4", "CD8A", "CD8B", "IL7R", "CCR7", "MS4A1", "CD19", "CD79A",
+  "CD14", "CD68", "CD163", "LYZ", "FCGR3A", "GNLY", "NKG7", "KLRD1", "MKI67", "TOP2A"
 )
 
 DefaultAssay(SjD) <- "SCT"
-
-# join SCT layers if split (merge can leave them split per source object)
-#SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])
+SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])
 
 markers <- markers[markers %in% rownames(SjD[["SCT"]])]
 
@@ -1655,61 +1406,68 @@ ht <- ComplexHeatmap::Heatmap(
 
 dir.create("output/SjD", recursive = TRUE, showWarnings = FALSE)
 png(
-  "output/SjD/SjD_Major_Celltype_heatmap.pdf",
+  "output/SjD/SjD_Major_Celltype_heatmap.png",
   width = 3200,
   height = 3500,
   res = 300
 )
 ComplexHeatmap::draw(ht)
 dev.off()
-#
 ```
 
+## 25. TLS / immune microenvironment marker heatmap
 
 ```{r}
-# Define markers per group from genes_TLS.csv
-germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
-                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
-inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
-                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
-                  "ICAM1", "VCAM1", "SELE")
-lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
-                         "CXCR5", "CCR7", "CXCR4")
-hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
-         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
-fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
-         "CXCL13", "CD54", "ICAM1", "FCER2")
+# marker groups from genes_TLS.csv
+germinal_center <- c(
+  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
+)
+inflammation <- c(
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+  "ICAM1", "VCAM1", "SELE"
+)
+lymphoid_chemokines <- c(
+  "CXCL13", "CCL21", "CCL19", "CXCL12",
+  "CXCR5", "CCR7", "CXCR4"
+)
+hev <- c(
+  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
+)
+fdc <- c(
+  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+  "CXCL13", "CD54", "ICAM1", "FCER2"
+)
 
-# Combine all markers in order
-markers <- unique(c(germinal_center, inflammation, 
-                    lymphoid_chemokines, hev, fdc))
+markers <- unique(c(
+  germinal_center, inflammation,
+  lymphoid_chemokines, hev, fdc
+))
 
 DefaultAssay(SjD) <- "SCT"
-#SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])   # safe no-op if already joined
+SjD[["SCT"]] <- JoinLayers(SjD[["SCT"]])
 
-# Filter to genes present in your Seurat object (SCT specifically)
 markers <- markers[markers %in% rownames(SjD[["SCT"]])]
 
-# Build group vector in same order
 marker_groups <- case_when(
-  markers %in% germinal_center    ~ "Germinal Center",
-  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% germinal_center     ~ "Germinal Center",
+  markers %in% inflammation        ~ "Inflammation & Cytokines",
   markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
-  markers %in% hev                ~ "HEV",
-  markers %in% fdc                ~ "FDC"
+  markers %in% hev                 ~ "HEV",
+  markers %in% fdc                 ~ "FDC"
 )
 names(marker_groups) <- markers
 
-# Group colors
 group_cols <- c(
-  "Germinal Center"         = "#2166AC",
-  "Inflammation & Cytokines"= "#D6604D",
-  "Lymphoid Chemokines"     = "#35978F",
-  "HEV"                     = "#8073AC",
-  "FDC"                     = "#E08214"
+  "Germinal Center"           = "#2166AC",
+  "Inflammation & Cytokines"  = "#D6604D",
+  "Lymphoid Chemokines"       = "#35978F",
+  "HEV"                       = "#8073AC",
+  "FDC"                       = "#E08214"
 )
 
-# Extract expression and percent data
 Idents(SjD) <- "Major_Celltype"
 SjD$Major_Celltype <- droplevels(as.factor(SjD$Major_Celltype))
 Idents(SjD) <- "Major_Celltype"
@@ -1728,7 +1486,7 @@ avg_exp <- AverageExpression(
   assays = "SCT",
   layer = "data",
   return.seurat = FALSE
-)$SCT   # matches assays = "SCT" above
+)$SCT
 
 common <- intersect(colnames(percent_mat), colnames(avg_exp))
 exp_mat <- as.matrix(avg_exp[markers, common, drop = FALSE])
@@ -1746,11 +1504,9 @@ exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# Color function
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Bubble cell function
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -1759,7 +1515,6 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat_scaled)
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
@@ -1772,7 +1527,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# Row annotation
 row_ha <- ComplexHeatmap::rowAnnotation(
   Group = marker_groups,
   col = list(Group = group_cols),
@@ -1787,7 +1541,6 @@ row_ha <- ComplexHeatmap::rowAnnotation(
   )
 )
 
-# Heatmap
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -1808,14 +1561,9 @@ ht <- ComplexHeatmap::Heatmap(
 )
 
 dir.create("output/SjD", recursive = TRUE, showWarnings = FALSE)
-png("output/SjD/TLS_markers.pdf",
-    width = 3200, height = 3500, res = 300)
+png("output/SjD/TLS_markers.png",
+  width = 3200, height = 3500, res = 300
+)
 ComplexHeatmap::draw(ht, merge_legend = TRUE)
 dev.off()
 ```
-
-
-
-
-
-

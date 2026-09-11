@@ -1,16 +1,17 @@
 ---
-title: "R Notebook"
+title: "Idiopathic Pulmonary Fibrosis - Processing and Annotation"
 output: html_notebook
 ---
-############################################################################################################################
-###ANALYSIS OF IDIOPATIC PULMONARY FIBROSIS#############################################################################
-##############################################################################################################################
 
+<!-- Step 2: Seurat processing for Idiopathic Pulmonary Fibrosis, run
+     separately for the Upper and Lower lung lobes - from raw 10x count
+     matrices to annotated, harmony-integrated Seurat objects. The
+     cell-cell communication (CCC) analysis is a separate step, in
+     IPF.sce.rmd. -->
 
-#THE PACKAGES
+## 1. Packages and setup
+
 ```{r setup, include=FALSE}
-
-##################PACKAGES
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -21,206 +22,166 @@ library(gplots)
 library(cowplot)
 library(BiocManager)
 library(devtools)
- #### the wd
+
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-
-
 ```
 
+## 2. Load raw data and merge samples by lobe
 
-
-###1load the data
 ```{r}
-#data for the Lower lung(L) and Upper(U)
 library(Seurat)
 library(DropletUtils)
 
-data.dir="../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Idiopathic Pulmonary Fibrosis/GSE128033_RAW"
+data.dir <- "../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Idiopathic Pulmonary Fibrosis/GSE128033_RAW"
+save.base <- "data/process/SeuratObjects/IPF"
 
-# List all sample folders
-sample.dirs=list.dirs(data.dir, recursive = FALSE)
+# sample names grouped by lung lobe (L = Lower, U = Upper)
+groups <- list(
+  L = c("1L1", "1L2", "2L1", "2L2", "3L"),
+  U = c("1U", "2U", "3U")
+)
+
+sample.dirs <- list.dirs(data.dir, recursive = FALSE)
 
 for (folder_path in sample.dirs) {
-  folder_name=basename(folder_path)  
+  folder_name <- basename(folder_path)
   message("Processing ", folder_name)
-  counts=Read10X(data.dir = folder_path)
-  # Droplet filtering
-  iscell_dd=defaultDrops(counts, expected = 5000)
-  eout=emptyDrops(counts, lower = 200)
+  counts <- Read10X(data.dir = folder_path)
+
+  # droplet filtering
+  iscell_dd <- defaultDrops(counts, expected = 5000)
+  eout <- emptyDrops(counts, lower = 200)
   eout$FDR[is.na(eout$FDR)] <- 1
-  iscell_ed=eout$FDR <= 0.01
-  # Metadata
-  meta=data.frame(
+  iscell_ed <- eout$FDR <= 0.01
+  meta <- data.frame(
     iscell_dd = iscell_dd,
     iscell_ed = iscell_ed,
     row.names = colnames(counts)
   )
-  # Keep droplets
-  keep=iscell_dd | iscell_ed
-  
-  # Create Seurat object
-  IPF=CreateSeuratObject(
+  keep <- iscell_dd | iscell_ed
+
+  IPF <- CreateSeuratObject(
     counts = counts[, keep],
     meta.data = meta[keep, ],
     project = folder_name
   )
-  # Add sample ID
-  IPF$sample=folder_name
-  # Save
-  saveRDS(IPF, file = paste0("data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis/Lower/", folder_name, ".rds"))
-}
-#merge in two seurat Upper and Lung
-save.base="data/process/SeuratObjects/Idiopathic Pulmonary Fibrosis"
+  IPF$sample <- folder_name
 
-groups=list(
-  L = c("1L1","1L2","2L1","2L2","3L"),
-  U = c("1U","2U","3U")
-)
+  # save each sample under its own lobe (Upper/Lower) subfolder
+  subfolder <- ifelse(folder_name %in% groups$U, "Upper", "Lower")
+  saveRDS(IPF, file = file.path(save.base, subfolder, paste0(folder_name, ".rds")))
+}
+
+# merge the per-sample objects into one Seurat object per lobe
 for (grp in names(groups)) {
-  folders=groups[[grp]]
-  
-  seurat_list=lapply(folders, function(folder_name) {
-    # Correct path: point to Lower or Upper subfolder
-    subfolder=ifelse(grp == "L", "Lower", "Upper")
-    file_path=file.path(save.base, subfolder, paste0(folder_name, ".rds"))
+  folders <- groups[[grp]]
+  subfolder <- ifelse(grp == "L", "Lower", "Upper")
+
+  seurat_list <- lapply(folders, function(folder_name) {
+    file_path <- file.path(save.base, subfolder, paste0(folder_name, ".rds"))
     message("Loading ", file_path)
     readRDS(file_path)
   })
-  names(seurat_list)=folders
-  
-  # Merge all Seurat objects in the group
+  names(seurat_list) <- folders
+
   if (length(seurat_list) > 1) {
-    combined=Reduce(function(x, y) merge(x, y), seurat_list)
+    combined <- Reduce(function(x, y) merge(x, y), seurat_list)
   } else {
-    combined=seurat_list[[1]]
+    combined <- seurat_list[[1]]
   }
-  
-  # Save merged 
-  save_dir=file.path(save.base, ifelse(grp == "L", "Lower", "Upper"))
-  saveRDS(combined, file = file.path(save_dir, paste0("IPF_", grp, ".rds")))
-  message("Saved merged Seurat object: IPF_", grp, " in ", save_dir)
+
+  saveRDS(combined, file = file.path(save.base, subfolder, paste0("IPF_", grp, ".rds")))
+  message("Saved merged Seurat object: IPF_", grp, " in ", file.path(save.base, subfolder))
 }
-rm(IPF.Up)
+
+rm(combined)
 gc(full = TRUE)
 ```
 
+# Upper lobe
 
+## 3. Quality control and filtering
 
-##########IPF UPPER--------------###################
+```{r, fig.width=10, fig.height=8}
+IPF.U <- readRDS("data/process/SeuratObjects/IPF/Upper/IPF_U.rds")
+DefaultAssay(IPF.U) # confirm default assay is RNA
 
+IPF.U[["percent.mt"]] <- PercentageFeatureSet(IPF.U, pattern = "^MT-")
+Idents(IPF.U) <- "IPF_Upper" # single group, just for the QC plot
+VlnPlot(IPF.U, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, log = TRUE)
 
-
-
-###2-qc and threshold
-```{r,fig.width=10,fig.height=8}
-##qc
-IPF.U=readRDS("data/process/SeuratObjects/IPF/Upper/IPF_U.rds")
-DefaultAssay(IPF.U) # if not RNA set it as RNA
-IPF.U[["percent.mt"]]=PercentageFeatureSet(IPF.U,pattern = "^MT-")
-Idents(IPF.U)="IPF_Upper"
-VlnPlot(IPF.U, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE)
-#threshold
-IPF.U=subset(IPF.U, subset=nFeature_RNA>200 & nFeature_RNA<7000 & percent.mt <10)
-
+# QC threshold, set from this sample's own distributions
+IPF.U <- subset(IPF.U, subset = nFeature_RNA > 200 & nFeature_RNA < 7000 & percent.mt < 10)
 ```
 
+## 4. Normalization, scaling, and PCA
 
-
-
-###2-statistics
 ```{r}
-###
-IPF.U=NormalizeData(IPF.U)
-IPF.U=FindVariableFeatures(IPF.U)
-IPF.U=ScaleData(IPF.U,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = IPF.U))
-IPF.U=RunPCA(IPF.U, features = VariableFeatures(object = IPF.U))
+IPF.U <- NormalizeData(IPF.U)
+IPF.U <- FindVariableFeatures(IPF.U)
+IPF.U <- ScaleData(IPF.U, vars.to.regress = c("nCount_RNA", "percent.mt"), features = VariableFeatures(object = IPF.U))
+IPF.U <- RunPCA(IPF.U, features = VariableFeatures(object = IPF.U))
 ElbowPlot(IPF.U)
-IPF.U=RunUMAP(IPF.U, dims = 1:20)
-
+IPF.U <- RunUMAP(IPF.U, dims = 1:20)
 ```
 
-
-
-###3-integration
+## 5. Harmony integration and clustering resolutions
 
 ```{r}
-
-##integration
 library(harmony)
-IPF.U=RunHarmony(IPF.U,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:20  )
-IPF.U[["RNA"]]=JoinLayers(IPF.U[["RNA"]])
-IPF.U = RunUMAP(IPF.U, reduction = "harmony", dims= 1:20, reduction.name = "umap.harmony")
+IPF.U <- RunHarmony(IPF.U, group.by.vars = "sample", orig.reduction = "pca", dims.use = 1:20)
+IPF.U[["RNA"]] <- JoinLayers(IPF.U[["RNA"]])
+IPF.U <- RunUMAP(IPF.U, reduction = "harmony", dims = 1:20, reduction.name = "umap.harmony")
 
-
-#for the resolution
-IPF.U=FindNeighbors(IPF.U,reduction = "harmony",dims = 1:20)
+# scan a range of resolutions before picking one
+IPF.U <- FindNeighbors(IPF.U, reduction = "harmony", dims = 1:20)
 for (res in seq(0.2, 1, by = 0.1)) {
-  IPF.U=FindClusters(IPF.U, resolution = res)
-  colname=paste0("res_", res)
-  IPF.U[[colname]]=IPF.U$seurat_clusters
+  IPF.U <- FindClusters(IPF.U, resolution = res)
+  colname <- paste0("res_", res)
+  IPF.U[[colname]] <- IPF.U$seurat_clusters
 }
-res_cols=grep("^res_", colnames(IPF.U@meta.data), value = TRUE)
+res_cols <- grep("^res_", colnames(IPF.U@meta.data), value = TRUE)
+
+# preview each resolution
 for (res in res_cols) {
-  p=DimPlot(IPF.U, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+  p <- DimPlot(IPF.U, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste("Resolution:", res))
   print(p)
-  readline(prompt="Press [Enter] to see the next resolution...")
-
 }
 
-#save all
+# save all resolutions to a single PDF for comparison
 pdf("output/IPF/Upper/All_resolutions_UMAP.pdf", width = 6, height = 5)
 for (res in res_cols) {
   p <- DimPlot(IPF.U, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste(res))
+    ggtitle(paste(res))
   print(p)
 }
 dev.off()
 
-
-
-
-
-##save
-p = DimPlot(IPF.U, group.by = "res_0.5", label = TRUE, reduction = "umap.harmony", label.size = 6) + 
-    ggtitle("Resolution: 0.5") + 
-    NoLegend() +
-    labs(x = "UMAP.h", y = "UMAP.h")
-
+# resolution 0.5 was chosen for downstream clustering
+p <- DimPlot(IPF.U, group.by = "res_0.5", label = TRUE, reduction = "umap.harmony", label.size = 6) +
+  ggtitle("Resolution: 0.5") +
+  NoLegend() +
+  labs(x = "UMAP.h", y = "UMAP.h")
 ggsave(filename = "output/IPF/Upper/Resolution.pdf", plot = p, width = 10, height = 8, dpi = 300)
-
 ```
 
+## 6. Clustering and marker genes
 
-
-
-
-
-###4-cluster and markers
 ```{r}
-###clusters
+IPF.U <- FindNeighbors(IPF.U, reduction = "harmony", dims = 1:20)
+IPF.U <- FindClusters(IPF.U, resolution = 0.5, cluster.name = "harmony_clusters")
 
-IPF.U=FindNeighbors(IPF.U,reduction = "harmony",dims = 1:20)
-IPF.U=FindClusters(IPF.U, resolution = 0.5,cluster.name = "harmony_clusters")
-#markers
-IPF.Umarkers=FindAllMarkers(IPF.U,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
-IPF.Umarkers = IPF.Umarkers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
-
+# markers per cluster, used below to name the cell types
+IPF.Umarkers <- FindAllMarkers(IPF.U, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+IPF.Umarkers <- IPF.Umarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 ```
 
-
-
-
-
-###5-annotation
-
-
+## 7. Marker genes for cell type annotation
 
 ```{r}
-
-genes = c(
+genes <- c(
   # Myeloid
   "AIF1", "PTPRC",
 
@@ -290,9 +251,6 @@ genes = c(
   # Goblet
   "MUC5B", "SCGB1A1", "MUC5AC", "SPDEF",
 
-  # Secretory
-  # "SCGB1A1", "MUC5B", "SPDEF",
-
   # Endothelial
   "VWF", "PECAM1", "CLDN5",
 
@@ -326,7 +284,7 @@ genes = c(
   # Smooth Muscle
   "DES", "MYH11",
 
-  #Mural cells
+  # Mural cells
   "PDGFRB", "RGS5", "FAM162B",
 
   # Mesothelial
@@ -336,7 +294,7 @@ genes = c(
   "TOP2A", "BIRC5", "UBE2C", "MKI67"
 )
 
-p=DotPlot(
+p <- DotPlot(
   IPF.U,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -349,81 +307,64 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "harmony_clusters"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
 ggsave(filename = "output/IPF/Upper/cluster.pdf", plot = p, width = 20, height = 8)
-
-
 ```
 
-
-
-
-
+## 8. Subclustering
 
 ```{r}
-l = FeaturePlot(IPF.U, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
-names(l) = unique(genes)
+l <- FeaturePlot(IPF.U, features = unique(genes), combine = FALSE, order = TRUE, reduction = "umap.harmony")
+names(l) <- unique(genes)
 
-#find subclusters
-FeaturePlot(IPF.U, features = c("CD4","COTL1", "CCR7", "LEF1"), combine = F, order = T, reduction = "umap.harmony")
+# check cluster 3 for finer structure
+FeaturePlot(IPF.U, features = c("CD4", "COTL1", "CCR7", "LEF1"), combine = FALSE, order = TRUE, reduction = "umap.harmony")
 
-
-
-Idents(IPF.U) = IPF.U$harmony_clusters
-IPF.U = FindSubCluster(IPF.U, cluster = c(3), resolution = 0.1, graph.name = "RNA_snn")
-P=DimPlot(IPF.U, group.by = "sub.cluster", reduction = "umap.harmony", label = T,label.size = 7)+
-  labs(x = "UMAP.h", 
-         y = "UMAP.h")
+Idents(IPF.U) <- IPF.U$harmony_clusters
+IPF.U <- FindSubCluster(IPF.U, cluster = c(3), resolution = 0.1, graph.name = "RNA_snn")
+P <- DimPlot(IPF.U, group.by = "sub.cluster", reduction = "umap.harmony", label = TRUE, label.size = 7) +
+  labs(x = "UMAP.h", y = "UMAP.h")
 P
 ggsave(filename = "output/IPF/Upper/sub.cluster.pdf", plot = P, width = 10, height = 8)
-
-
 ```
 
-
-
-
-
-
+## 9.cell type labels
 
 ```{r}
-
-#----cluster_specifique_name
-Idents(IPF.U)="sub.cluster"
-cluster_name_x=c(
-  "0"  = "Macrophages_0"                  ,
-  "1"  = "Macrophages_1"                   ,
-  "2"  = "Macrophages_2",
-  "3_0"  = "CD4_3_0"            ,
-  "3_1"  = "CD8_3_1",
-  "4"  = "Goblet Cells_4"                     ,
-  "5"  = "Monocytes_5"                       ,
-  "6"  = "NK Cells_6"                    ,
-  "7"  = "Peribronchial Endothelial_7"            ,
-  "8"  = "Arterial Endothelial_8"                          ,
-  "9"  = "Mural Cells_9"                     ,
-  "10" = "Fibroblasts_10"                  ,          
-  "11" = "Ciliated Cells_11"                      ,
-  "12" = "Fibroblasts_12"                     ,
-  "13" = "Alveolar Cells_13"             ,
-  "14" = "Mast Cells_14"             ,
-  "15" = "Proliferating Cells_15"                  ,
-  "16" = "B Cells_16"          ,
-  "17" = "Macrophages_17"   ,
+Idents(IPF.U) <- "sub.cluster"
+cluster_name_x <- c(
+  "0" = "Macrophages_0",
+  "1" = "Macrophages_1",
+  "2" = "Macrophages_2",
+  "3_0" = "CD4_3_0",
+  "3_1" = "CD8_3_1",
+  "4" = "Goblet Cells_4",
+  "5" = "Monocytes_5",
+  "6" = "NK Cells_6",
+  "7" = "Peribronchial Endothelial_7",
+  "8" = "Arterial Endothelial_8",
+  "9" = "Mural Cells_9",
+  "10" = "Fibroblasts_10",
+  "11" = "Ciliated Cells_11",
+  "12" = "Fibroblasts_12",
+  "13" = "Alveolar Cells_13",
+  "14" = "Mast Cells_14",
+  "15" = "Proliferating Cells_15",
+  "16" = "B Cells_16",
+  "17" = "Macrophages_17",
   "18" = "Lymphatic Endothelial_18"
-  
 )
 
-IPF.U=RenameIdents(IPF.U, cluster_name_x)
-IPF.U$CellType=Idents(IPF.U)
+IPF.U <- RenameIdents(IPF.U, cluster_name_x)
+IPF.U$CellType <- Idents(IPF.U)
 
-#
-p=DotPlot(
+p <- DotPlot(
   IPF.U,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -436,82 +377,70 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "CellType") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "CellType"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
 
-
-pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/IPF/Upper/IPFU_cluster_name.pdf",
-    width = 20, height = 10)
-   print(p)
+pdf("/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/output/IPF/Upper/IPFU_cluster_name.pdf", width = 20, height = 10)
+print(p)
 dev.off()
-
 ```
 
+## 10. Major cell types and UMAP
 
-
-
-
-
-
-```{r,fig.width=12, fig.height=8}
-
-#---------umap--------
-
-
-##1celltype
-Idents(IPF.U)="sub.cluster"
-cluster_name=c(
-  "0"  = "Macrophages"                  ,
-  "1"  = "Macrophages"                   ,
-  "2"  = "Macrophages",
-  "3_0"  = "CD4"            ,
-  "3_1"  = "CD8",
-  "4"  = "Goblet Cells"                     ,
-  "5"  = "Monocytes"                       ,
-  "6"  = "NK Cells"                    ,
-  "7"  = "Peribronchial Endothelial"            ,
-  "8"  = "Arterial Endothelial"                          ,
-  "9"  = "Mural Cells"                     ,
-  "10" = "Fibroblasts"                  ,          
-  "11" = "Ciliated Cells"                      ,
-  "12" = "Fibroblasts"                     ,
-  "13" = "Alveolar Cells"             ,
-  "14" = "Mast Cells"             ,
-  "15" = "Proliferating Cells"                  ,
-  "16" = "B Cells"          ,
-  "17" = "Macrophages"   ,
-  "18" = "Lymphatic Endothelial"   
-  
+```{r, fig.width=12, fig.height=8}
+Idents(IPF.U) <- "sub.cluster"
+cluster_name <- c(
+  "0" = "Macrophages",
+  "1" = "Macrophages",
+  "2" = "Macrophages",
+  "3_0" = "CD4",
+  "3_1" = "CD8",
+  "4" = "Goblet Cells",
+  "5" = "Monocytes",
+  "6" = "NK Cells",
+  "7" = "Peribronchial Endothelial",
+  "8" = "Arterial Endothelial",
+  "9" = "Mural Cells",
+  "10" = "Fibroblasts",
+  "11" = "Ciliated Cells",
+  "12" = "Fibroblasts",
+  "13" = "Alveolar Cells",
+  "14" = "Mast Cells",
+  "15" = "Proliferating Cells",
+  "16" = "B Cells",
+  "17" = "Macrophages",
+  "18" = "Lymphatic Endothelial"
 )
 
-IPF.U=RenameIdents(IPF.U, cluster_name)
-IPF.U$Major_Celltype=Idents(IPF.U)
-##2color
+IPF.U <- RenameIdents(IPF.U, cluster_name)
+IPF.U$Major_Celltype <- Idents(IPF.U)
+
 celltype_cols <- c(
-  "Macrophages"           = "orangered",
-  "CD8"                   = "tomato",
-  "CD4"                  =  "olivedrab2",
-  "Venous Endothelial"    = "chocolate1",
-  "Monocytes"             = "#2ca02c",
-  "NK Cells"              = "magenta",
-  "B Cells"               = "gold",
-  "Arterial Endothelial"  = "cadetblue3",
-  "Goblet Cells"          = "#e377c2",
-  "Alveolar Cells"        = "aquamarine",
-  "Mast Cells"            = "#FDBF6F",
-  "Mural Cells"           = "#1F78B4",
-  "Proliferating Cells"   = "#B15928",
+  "Macrophages" = "orangered",
+  "CD8" = "tomato",
+  "CD4" = "olivedrab2",
+  "Venous Endothelial" = "chocolate1",
+  "Monocytes" = "#2ca02c",
+  "NK Cells" = "magenta",
+  "B Cells" = "gold",
+  "Arterial Endothelial" = "cadetblue3",
+  "Goblet Cells" = "#e377c2",
+  "Alveolar Cells" = "aquamarine",
+  "Mast Cells" = "#FDBF6F",
+  "Mural Cells" = "#1F78B4",
+  "Proliferating Cells" = "#B15928",
   "Lymphatic Endothelial" = "mediumorchid1",
-  "Ciliated Cells"        = "saddlebrown",
-  "Fibroblasts"           = "cyan",
+  "Ciliated Cells" = "saddlebrown",
+  "Fibroblasts" = "cyan",
   "Peribronchial Endothelial" = "darkgoldenrod2"
 )
 
-##3 center
+# UMAP with a label placed at each cell type's centroid
 umap_df <- as.data.frame(Embeddings(IPF.U, "umap.harmony"))
 umap_df$Major_Celltype <- IPF.U$Major_Celltype
 
@@ -520,9 +449,9 @@ centers <- aggregate(
   data = umap_df,
   FUN = median
 )
-##plot
+
 library(ggrepel)
-fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+fig1a <- ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -545,39 +474,23 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
   labs(x = "UMAP.h", y = "UMAP.h")
 
 ggsave(filename = "output/IPF/Upper/IPFU_CellType.pdf", plot = fig1a, width = 12, height = 10, dpi = 300)
-
 ```
 
-
-
-
-
-
-
-
+## 11. Marker expression heatmap by major cell type
 
 ```{r}
-#----same methods
-# for markers
 Idents(IPF.U) <- "Major_Celltype"
-
-
-# -------------------------------
 DefaultAssay(IPF.U) <- "RNA"
 expr_mat <- GetAssayData(IPF.U, layer = "data")
 
-# -------------------------------
-# Percent expression matrix
-
+# percent of cells expressing each marker, per cell type
 percent_mat <- sapply(levels(Idents(IPF.U)), function(ct) {
   cells <- WhichCells(IPF.U, idents = ct)
   Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
 percent_mat <- as.matrix(percent_mat)
 
-# -------------------------------
-# Average expression matrix
-
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   IPF.U,
   features = genes,
@@ -587,35 +500,23 @@ avg_exp <- AverageExpression(
 )$RNA
 
 exp_mat <- as.matrix(avg_exp[genes, colnames(percent_mat)])
-
-# -------------------------------
-# Clean data
-
 exp_mat[is.infinite(exp_mat)] <- NA
-keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 
+# drop markers with no expression in any cell type
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
 
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
-
-# -------------------------------
-# Scaling
-
 exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# -------------------------------
-# Color function
-
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# -------------------------------
-# Dot rendering
-
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -624,15 +525,10 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# -------------------------------
-# Cell type colors (annotation)
-
 celltypes <- colnames(exp_mat_scaled)
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(celltypes))
-
 names(cols) <- celltypes
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -641,131 +537,105 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# -------------------------------
-# plot
-
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
   col = col_fun,
   rect_gp = grid::gpar(type = "none"),
   cell_fun = cell_fun,
-
   row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
-
-  column_names_gp = grid::gpar(
-    fontsize = 10,
-    fontface = "bold"
-  ),
-
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
   column_names_rot = 90,
-
   border = TRUE,
   top_annotation = column_ha,
   row_km = 4
 )
 
-# -------------------------------
-# save
-
-pdf("output/IPF/Upper/markers.pdf",
-    width = 10, height = 15)
-
+pdf("output/IPF/Upper/markers.pdf", width = 10, height = 15)
 ComplexHeatmap::draw(ht)
-
 dev.off()
 ```
 
-
-
-
-
-
-###7 Class Major_Celltype with family
-
+## 12. Broader cell-type grouping (General)
 
 ```{r}
-#------
-#extract
 unique(IPF.U$Major_Celltype)
 
-#
 IPF.U$General <- recode(IPF.U$Major_Celltype,
-                    "NK Cells" = "NK Cells",
-                    "Macrophages" = "Mono/Mac",
-                    "CD8" = "CD8",
-                    "CD4" = "CD4",
-                    "Mast Cells" = "Mast Cells",
-                    "Mural Cells" = "Mural Cells",
-                    "Alveolar Cells" = "Epithelial Cells",
-                    "Arterial Endothelial" = "Endothelial Cells",
-                    "Proliferating Cells" = "Proliferating Cells",
-                    "Monocytes" = "Mono/Mac",
-                    "Fibroblasts" = "Fibroblasts",
-                    "B Cells" = "B Cells",
-                    "Peribronchial Endothelial" = "Endothelial Cells",
-                    "Goblet Cells" = "Epithelial Cells",
-                    "Lymphatic Endothelial" = "Endothelial Cells",
-                    "Ciliated Cells" = "Epithelial Cells" 
-                      
+  "NK Cells" = "NK Cells",
+  "Macrophages" = "Mono/Mac",
+  "CD8" = "CD8",
+  "CD4" = "CD4",
+  "Mast Cells" = "Mast Cells",
+  "Mural Cells" = "Mural Cells",
+  "Alveolar Cells" = "Epithelial Cells",
+  "Arterial Endothelial" = "Endothelial Cells",
+  "Proliferating Cells" = "Proliferating Cells",
+  "Monocytes" = "Mono/Mac",
+  "Fibroblasts" = "Fibroblasts",
+  "B Cells" = "B Cells",
+  "Peribronchial Endothelial" = "Endothelial Cells",
+  "Goblet Cells" = "Epithelial Cells",
+  "Lymphatic Endothelial" = "Endothelial Cells",
+  "Ciliated Cells" = "Epithelial Cells"
 )
 unique(IPF.U$General)
 ```
 
-
-##markers that we can have in TLS 
-
+## 13. TLS (tertiary lymphoid structure) marker heatmap
 
 ```{r}
+# marker sets per functional group, from genes_TLS.csv
+germinal_center <- c(
+  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
+)
 
+inflammation <- c(
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+  "ICAM1", "VCAM1", "SELE"
+)
 
-### TLS markers that we can have in TLS 
+lymphoid_chemokines <- c(
+  "CXCL13", "CCL21", "CCL19", "CXCL12",
+  "CXCR5", "CCR7", "CXCR4"
+)
 
+hev <- c(
+  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
+)
 
-# Define markers per group from genes_TLS.csv
-germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
-                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+fdc <- c(
+  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+  "CXCL13", "CD54", "ICAM1", "FCER2"
+)
 
-inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
-                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
-                  "ICAM1", "VCAM1", "SELE")
-
-lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
-                         "CXCR5", "CCR7", "CXCR4")
-
-hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
-         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
-
-fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
-         "CXCL13", "CD54", "ICAM1", "FCER2")
-
-# Combine all markers in order
-markers <- unique(c(germinal_center, inflammation, 
-                    lymphoid_chemokines, hev, fdc))
-
-# Filter to genes present in your Seurat object
+markers <- unique(c(
+  germinal_center, inflammation,
+  lymphoid_chemokines, hev, fdc
+))
 markers <- markers[markers %in% rownames(IPF.U)]
 
-# Build group vector in same order
 marker_groups <- case_when(
-  markers %in% germinal_center    ~ "Germinal Center",
-  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% germinal_center ~ "Germinal Center",
+  markers %in% inflammation ~ "Inflammation & Cytokines",
   markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
-  markers %in% hev                ~ "HEV",
-  markers %in% fdc                ~ "FDC"
+  markers %in% hev ~ "HEV",
+  markers %in% fdc ~ "FDC"
 )
 names(marker_groups) <- markers
 
-# Group colors
 group_cols <- c(
-  "Germinal Center"         = "#2166AC",
-  "Inflammation & Cytokines"= "#D6604D",
-  "Lymphoid Chemokines"     = "#35978F",
-  "HEV"                     = "#8073AC",
-  "FDC"                     = "#E08214"
+  "Germinal Center" = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines" = "#35978F",
+  "HEV" = "#8073AC",
+  "FDC" = "#E08214"
 )
 
-# Extract expression and percent data
+# percent of cells expressing each marker, per cell type
 Idents(IPF.U) <- "General"
 DefaultAssay(IPF.U) <- "RNA"
 expr_mat <- GetAssayData(IPF.U, layer = "data")
@@ -776,6 +646,7 @@ percent_mat <- sapply(levels(Idents(IPF.U)), function(ct) {
 })
 percent_mat <- as.matrix(percent_mat)
 
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   IPF.U,
   features = markers,
@@ -787,6 +658,7 @@ avg_exp <- AverageExpression(
 exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 exp_mat[is.infinite(exp_mat)] <- NA
 
+# drop markers with no expression in any cell type
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
@@ -798,11 +670,10 @@ exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# Color function
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Bubble cell function
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -811,7 +682,6 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat_scaled)
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
@@ -824,7 +694,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# Row annotation
 row_ha <- ComplexHeatmap::rowAnnotation(
   Group = marker_groups,
   col = list(Group = group_cols),
@@ -839,7 +708,6 @@ row_ha <- ComplexHeatmap::rowAnnotation(
   )
 )
 
-# Heatmap
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -859,24 +727,14 @@ ht <- ComplexHeatmap::Heatmap(
   row_gap = unit(2, "mm")
 )
 
-pdf("output/IPF/Upper/TLS_markers.pdf",
-    width = 8, height = 10)
+pdf("output/IPF/Upper/TLS_markers.pdf", width = 8, height = 10)
 ComplexHeatmap::draw(ht, merge_legend = TRUE)
 dev.off()
-
-
-
 ```
 
+## 14. Save the processed object
 
-
-
-
-
-
-###Save
 ```{r}
-
 keep_cols <- c(
   "orig.ident",
   "nCount_RNA",
@@ -887,150 +745,120 @@ keep_cols <- c(
   "Major_Celltype",
   "General",
   "sub.cluster"
-  
 )
-
 IPF.U@meta.data <- IPF.U@meta.data[, keep_cols]
-#CSV 
-write.csv(IPF.U@meta.data,file = "data/process/SeuratObjects/IPF/Upper/IPF.U_metadata.csv",row.names = TRUE)
+
+write.csv(IPF.U@meta.data, file = "data/process/SeuratObjects/IPF/Upper/IPF.U_metadata.csv", row.names = TRUE)
 
 saveRDS(IPF.U, file = "data/process/SeuratObjects/IPF/Upper/IPF.U_process.rds")
-## run it later to load all 
-IPF.U = readRDS("data/process/SeuratObjects/IPF/Upper/IPF.U_process.rds")
 
 
 ```
 
-
-
-
-
-
-
+## 15. Export for gene regulatory network analysis (SCENIC)
 
 ```{r}
-#####for pyscenic 
+# Export the raw counts as a sparse matrix + gene/barcode lists, so they can
+# be imported by pySCENIC in the terminal.
 expr <- GetAssayData(IPF.U, assay = "RNA", layer = "counts")
 
 writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Upper/input/matrix.mtx")
 
 write.table(rownames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Upper/input/genes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Upper/input/genes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 
 write.table(colnames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Upper/input/barcodes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Upper/input/barcodes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+################################          Lower lobe              ####################
+
+## 16. Quality control and filtering
+
+```{r}
+IPF.L <- readRDS("data/process/SeuratObjects/IPF/Lower/IPF_L.rds")
+DefaultAssay(IPF.L) # confirm default assay is RNA
+
+IPF.L[["percent.mt"]] <- PercentageFeatureSet(IPF.L, pattern = "^MT-")
+Idents(IPF.L) <- "x" # single group, just for the QC plot
+IPF.L$x <- "All"
+VlnPlot(IPF.L, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, log = TRUE)
+
+# QC threshold, set from this sample's own distributions
+IPF.L <- subset(IPF.L, subset = nFeature_RNA > 200 & nFeature_RNA < 7000 & percent.mt < 10)
 
 ```
 
+## 17. Normalization, scaling, and PCA
 
-
-
-
-
-
-
-----------------------------------------------------------___________---------------------------------------------------------------
-----------------------------------------------------------------------------------------------------------------------------
-#####STEP-3 ANALYSIS FOR IPF in LOWER lUNG
------------------------------------------------------------------------------------------------------------------------
-
-
-
-
-
-
-###1-qc
 ```{r}
-##qc---------
 
-IPF.L=readRDS("data/process/SeuratObjects/IPF/Lower/IPF_L.rds")
-DefaultAssay(IPF.L) # if not RNA set is as RNA
-IPF.L[["percent.mt"]]=PercentageFeatureSet(IPF.L,pattern = "^MT-")
-Idents(IPF.L)="x"
-IPF.L$x="All"
-VlnPlot(IPF.L, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE)
-#threshold
-IPF.L=subset(IPF.L, subset=nFeature_RNA>200 & nFeature_RNA<7000 & percent.mt <10)
-```
-
-
-
-####2-statistics
-```{r}
-IPF.L=NormalizeData(IPF.L)
-IPF.L=FindVariableFeatures(IPF.L)
-IPF.L=ScaleData(IPF.L,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = IPF.L))
-IPF.L=RunPCA(IPF.L, features = VariableFeatures(object = IPF.L))
+IPF.L <- NormalizeData(IPF.L)
+IPF.L <- FindVariableFeatures(IPF.L)
+IPF.L <- ScaleData(IPF.L, vars.to.regress = c("nCount_RNA", "percent.mt"), features = VariableFeatures(object = IPF.L))
+IPF.L <- RunPCA(IPF.L, features = VariableFeatures(object = IPF.L))
 ElbowPlot(IPF.L)
-#IPF.L=RunUMAP(IPF.L, dims = 1:20)
-#P=DimPlot(IPF.L,reduction = "umap", label = TRUE)
 
 ```
 
+## 18. Harmony integration and clustering resolutions
 
-
-###3-integration
 ```{r}
-##integration
 library(harmony)
-IPF.L=RunHarmony(IPF.L,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:20  )
-IPF.L[["RNA"]]=JoinLayers(IPF.L[["RNA"]])
-IPF.L = RunUMAP(IPF.L, reduction = "harmony", dims= 1:20, reduction.name = "umap.harmony")
-p=DimPlot(IPF.L,reduction = "umap.harmony",group.by = c("sample"),label.size = 2, shuffle = T)
+IPF.L <- RunHarmony(IPF.L, group.by.vars = "sample", orig.reduction = "pca", dims.use = 1:20)
+IPF.L[["RNA"]] <- JoinLayers(IPF.L[["RNA"]])
+IPF.L <- RunUMAP(IPF.L, reduction = "harmony", dims = 1:20, reduction.name = "umap.harmony")
+p <- DimPlot(IPF.L, reduction = "umap.harmony", group.by = c("sample"), label.size = 2, shuffle = TRUE)
 p
-ggsave(filename = "output/IPF/Low/IPFintegration.png", plot=p, width = 12, height = 8)
+ggsave(filename = "output/IPF/Low/IPFintegration.png", plot = p, width = 12, height = 8)
 
-#for the resolution
-IPF.L=FindNeighbors(IPF.L,reduction = "harmony",dims = 1:20)
+# scan a range of resolutions before picking one
+IPF.L <- FindNeighbors(IPF.L, reduction = "harmony", dims = 1:20)
 for (res in seq(0.2, 1, by = 0.1)) {
-  IPF.L=FindClusters(IPF.L, resolution = res)
-  colname=paste0("res_", res)
-  IPF.L[[colname]]=IPF.L$seurat_clusters
+  IPF.L <- FindClusters(IPF.L, resolution = res)
+  colname <- paste0("res_", res)
+  IPF.L[[colname]] <- IPF.L$seurat_clusters
 }
-res_cols=grep("^res_", colnames(IPF.L@meta.data), value = TRUE)
+res_cols <- grep("^res_", colnames(IPF.L@meta.data), value = TRUE)
+
+# preview each resolution
 for (res in res_cols) {
-  p=DimPlot(IPF.L, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
-  
+  p <- DimPlot(IPF.L, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste("Resolution:", res))
   print(p)
-  readline(prompt="Press [Enter] to see the next resolution...")
 }
 
-##save
-p=DimPlot(IPF.L,group.by = "res_0.5",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.5") +NoLegend()+
-  labs(x = "UMAP.h", 
-         y = "UMAP.h")
-ggsave(filename = "output/IPF/Low/IPF.L_resolution.pdf",plot = p,width = 10,height = 8,dpi = 300)
-
+# resolution 0.5 was chosen for downstream clustering
+p <- DimPlot(IPF.L, group.by = "res_0.5", label = TRUE, reduction = "umap.harmony") +
+  ggtitle("Resolution: 0.5") +
+  NoLegend() +
+  labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/IPF/Low/IPF.L_resolution.pdf", plot = p, width = 10, height = 8, dpi = 300)
 ```
 
+## 19. Clustering and marker genes
 
-###4 cluster and markers
 ```{r}
-###clusters
+IPF.L <- FindNeighbors(IPF.L, reduction = "harmony", dims = 1:20)
+IPF.L <- FindClusters(IPF.L, resolution = 0.5, cluster.name = "harmony_clusters")
 
-IPF.L=FindNeighbors(IPF.L,reduction = "harmony",dims = 1:20)
-IPF.L=FindClusters(IPF.L, resolution = 0.5,cluster.name = "harmony_clusters")
-#markers
-IPF.Lmarkers=FindAllMarkers(IPF.L,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
-IPF.Lmarkers = IPF.Lmarkers%>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
+# markers per cluster, used below to name the cell types
+IPF.Lmarkers <- FindAllMarkers(IPF.L, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+IPF.Lmarkers <- IPF.Lmarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 ```
 
-
-
-###5-annotation
-
+## 20. Marker genes for cell type annotation
 
 ```{r}
-
-genes = c(
+genes <- c(
   # Myeloid
   "AIF1", "PTPRC",
 
@@ -1100,9 +928,6 @@ genes = c(
   # Goblet
   "MUC5B", "SCGB1A1", "MUC5AC", "SPDEF",
 
-  # Secretory
-  # "SCGB1A1", "MUC5B", "SPDEF",
-
   # Endothelial
   "VWF", "PECAM1", "CLDN5",
 
@@ -1136,7 +961,7 @@ genes = c(
   # Smooth Muscle
   "DES", "MYH11",
 
-  #Mural Cells
+  # Mural Cells
   "PDGFRB", "RGS5", "FAM162B",
 
   # Mesothelial
@@ -1145,24 +970,15 @@ genes = c(
   # Proliferating Cells
   "TOP2A", "BIRC5", "UBE2C", "MKI67"
 )
-
 ```
 
 ```{r}
-l = FeaturePlot(IPF.L, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
-names(l) = unique(genes)
+l <- FeaturePlot(IPF.L, features = unique(genes), combine = FALSE, order = TRUE, reduction = "umap.harmony")
+names(l) <- unique(genes)
 ```
 
-
-
-
-
 ```{r}
-
-
-
-###with the markers
-p=DotPlot(
+p <- DotPlot(
   IPF.L,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -1175,52 +991,47 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "harmony_clusters"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
-  
+
 ggsave(filename = "output/IPF/Low/IPFL_cluster.pdf", plot = p, width = 20, height = 8)
-
-
 ```
 
-
+## 21. Fine-grained cell type labels
 
 ```{r}
-#---cluster_specifique_annotation---
-
-##1celltype
-Idents(IPF.L)="harmony_clusters"
-cluster_name_x=c(
-  "0"  = "Macrophages_0"                                     ,
-  "1"  = "Venous Endothelial_1"                   ,
-  "2"  = "Fibroblasts_2"                                     ,
-  "3"  = "CD4_3"                                     ,
-  "4"  = "Goblet Cells_4"                                     ,
-  "5"  = "CD8_5"                                     ,
-  "6"  = "Mast Cells_6"                          ,
-  "7"  = "Alveolar Cells_7"                           ,
-  "8"  = "Monocytes_8"                                     ,
-  "9"  = "Ciliated Cells_9"                                     ,
-  "10" = "Basal Cells_10"                                     ,          
-  "11" = "Macrophages_11"                                   ,
-  "12" = "Mural Cells_12"                                     ,
-  "13" = "Venous Endothelial_13"                                     ,
-  "14" = "Macrophages_14"                   ,
-  "15" = "Fibroblasts_15"                                     ,
-  "16" = "B Cells_16"                                     ,
-  "17" = "Proliferating Cells_17"                                     ,    
-  "18" = "Lymphatic Endothelial_18"  
+Idents(IPF.L) <- "harmony_clusters"
+cluster_name_x <- c(
+  "0" = "Macrophages_0",
+  "1" = "Venous Endothelial_1",
+  "2" = "Fibroblasts_2",
+  "3" = "CD4_3",
+  "4" = "Goblet Cells_4",
+  "5" = "CD8_5",
+  "6" = "Mast Cells_6",
+  "7" = "Alveolar Cells_7",
+  "8" = "Monocytes_8",
+  "9" = "Ciliated Cells_9",
+  "10" = "Basal Cells_10",
+  "11" = "Macrophages_11",
+  "12" = "Mural Cells_12",
+  "13" = "Venous Endothelial_13",
+  "14" = "Macrophages_14",
+  "15" = "Fibroblasts_15",
+  "16" = "B Cells_16",
+  "17" = "Proliferating Cells_17",
+  "18" = "Lymphatic Endothelial_18"
 )
 
-IPF.L=RenameIdents(IPF.L, cluster_name_x)
-IPF.L$CellType = Idents(IPF.L)
+IPF.L <- RenameIdents(IPF.L, cluster_name_x)
+IPF.L$CellType <- Idents(IPF.L)
 
-#plot
-p=DotPlot(
+p <- DotPlot(
   IPF.L,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -1233,76 +1044,64 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "CellType") + RotatedAxis()  
-    p <- p + theme(
+  cluster.idents = TRUE,
+  group.by = "CellType"
+) + RotatedAxis()
+p <- p + theme(
   axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9, face = "bold"),
   axis.text.y = element_text(size = 9, face = "bold")
 )
 ggsave(filename = "output/IPF/Low/IPFL_cluster_name.pdf", plot = p, width = 20, height = 10)
-
-
 ```
 
-
-
+## 22. Major cell types and UMAP
 
 ```{r, fig.width=14, fig.height=8}
-
-##------umap--------
-
-
-##1celltype
-Idents(IPF.L)="harmony_clusters"
-cluster_name=c(
-  "0"  = "Macrophages"                                     ,
-  "1"  = "Venous Endothelial"                   ,
-  "2"  = "Fibroblasts"                                     ,
-  "3"  = "CD4"                                     ,
-  "4"  = "Goblet Cells"                                     ,
-  "5"  = "CD8"                                     ,
-  "6"  = "Mast Cells"                          ,
-  "7"  = "Alveolar Cells"                           ,
-  "8"  = "Monocytes"                                     ,
-  "9"  = "Ciliated Cells"                                     ,
-  "10" = "Basal Cells"                                     ,          
-  "11" = "Macrophages"                                   ,
-  "12" = "Mural Cells"                                     ,
-  "13" = "Venous Endothelial"                                     ,
-  "14" = "Macrophages"                   ,
-  "15" = "Fibroblasts"                                     ,
-  "16" = "B Cells"                                     ,
-  "17" = "Proliferating Cells"                                     ,    
-  "18" = "Lymphatic Endothelial"  
+Idents(IPF.L) <- "harmony_clusters"
+cluster_name <- c(
+  "0" = "Macrophages",
+  "1" = "Venous Endothelial",
+  "2" = "Fibroblasts",
+  "3" = "CD4",
+  "4" = "Goblet Cells",
+  "5" = "CD8",
+  "6" = "Mast Cells",
+  "7" = "Alveolar Cells",
+  "8" = "Monocytes",
+  "9" = "Ciliated Cells",
+  "10" = "Basal Cells",
+  "11" = "Macrophages",
+  "12" = "Mural Cells",
+  "13" = "Venous Endothelial",
+  "14" = "Macrophages",
+  "15" = "Fibroblasts",
+  "16" = "B Cells",
+  "17" = "Proliferating Cells",
+  "18" = "Lymphatic Endothelial"
 )
 
-IPF.L=RenameIdents(IPF.L, cluster_name)
-IPF.L$Major_Celltype=Idents(IPF.L)
-##2color
-celltype_cols = c(
-  "Venous Endothelial"    = "chocolate1",  # strong blue
-  "Lymphatic Endothelial" = "mediumorchid1",  # green
-  
-  "CD4"                   = "olivedrab2",  # red
-  "B Cells"               = "gold",  # purple
-  "Monocytes"             = "#2ca02c",  # orange
-  "Macrophages"           = "orangered",  # brown
-  "Mast Cells"            = "#FDBF6F",  # yellow
-  
-  "Alveolar Cells"        = "aquamarine",  # light blue
-  "Ciliated Cells"        = "saddlebrown",  # black
-  "Goblet Cells"          = "cornflowerblue",  # pink
-  "Basal Cells"           = "indianred3",  # lavender
-  "Proliferating Cells"   = "#1F78B4",  # pale yellow
-  
-  "Mural Cells"           = "#1F78B4",  # dark red
-  "Fibroblasts"           = "cyan",   # gray
-  "CD8"                   ="tomato"
+IPF.L <- RenameIdents(IPF.L, cluster_name)
+IPF.L$Major_Celltype <- Idents(IPF.L)
+
+celltype_cols <- c(
+  "Venous Endothelial" = "chocolate1",
+  "Lymphatic Endothelial" = "mediumorchid1",
+  "CD4" = "olivedrab2",
+  "B Cells" = "gold",
+  "Monocytes" = "#2ca02c",
+  "Macrophages" = "orangered",
+  "Mast Cells" = "#FDBF6F",
+  "Alveolar Cells" = "aquamarine",
+  "Ciliated Cells" = "saddlebrown",
+  "Goblet Cells" = "cornflowerblue",
+  "Basal Cells" = "indianred3",
+  "Proliferating Cells" = "#1F78B4",
+  "Mural Cells" = "#1F78B4",
+  "Fibroblasts" = "cyan",
+  "CD8" = "tomato"
 )
 
-
-
-##3 center
+# UMAP with a label placed at each cell type's centroid
 umap_df <- as.data.frame(Embeddings(IPF.L, "umap.harmony"))
 umap_df$Major_Celltype <- IPF.L$Major_Celltype
 
@@ -1311,8 +1110,8 @@ centers <- aggregate(
   data = umap_df,
   FUN = median
 )
-##plot
-fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+
+fig1a <- ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -1335,39 +1134,24 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
   labs(x = "UMAP.h", y = "UMAP.h")
 
 fig1a
-ggsave(ggsave(filename = "output/IPF/Low/IPFL_cellType.pdf", plot = fig1a, width = 12, height = 10))
-
-
+ggsave(filename = "output/IPF/Low/IPFL_cellType.pdf", plot = fig1a, width = 12, height = 10)
 ```
 
-
-
-
-
-
+## 23. Marker expression heatmap by major cell type
 
 ```{r}
-#----same methods
-# gene with major annotation
 Idents(IPF.L) <- "Major_Celltype"
-
-
-# -------------------------------
 DefaultAssay(IPF.L) <- "RNA"
 expr_mat <- GetAssayData(IPF.L, layer = "data")
 
-# -------------------------------
-# Percent expression matrix
-
+# percent of cells expressing each marker, per cell type
 percent_mat <- sapply(levels(Idents(IPF.L)), function(ct) {
   cells <- WhichCells(IPF.L, idents = ct)
   Matrix::rowMeans(expr_mat[genes, cells, drop = FALSE] > 0) * 100
 })
 percent_mat <- as.matrix(percent_mat)
 
-# -------------------------------
-# Average expression matrix
-
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   IPF.L,
   features = genes,
@@ -1377,35 +1161,23 @@ avg_exp <- AverageExpression(
 )$RNA
 
 exp_mat <- as.matrix(avg_exp[genes, colnames(percent_mat)])
-
-# -------------------------------
-# Clean data
-
 exp_mat[is.infinite(exp_mat)] <- NA
-keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 
+# drop markers with no expression in any cell type
+keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
 
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
-
-# -------------------------------
-# Scaling
-
 exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# -------------------------------
-# Color function
-
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# -------------------------------
-# Dot rendering
-
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -1414,15 +1186,10 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# -------------------------------
-# Cell type colors (annotation)
-
 celltypes <- colnames(exp_mat_scaled)
-
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
 )(length(celltypes))
-
 names(cols) <- celltypes
 
 column_ha <- ComplexHeatmap::HeatmapAnnotation(
@@ -1431,177 +1198,136 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# -------------------------------
-# plot
-
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
   col = col_fun,
   rect_gp = grid::gpar(type = "none"),
   cell_fun = cell_fun,
-
   row_names_gp = grid::gpar(fontsize = 7, fontface = "bold"),
-
-  column_names_gp = grid::gpar(
-    fontsize = 10,
-    fontface = "bold"
-  ),
-
+  column_names_gp = grid::gpar(fontsize = 10, fontface = "bold"),
   column_names_rot = 90,
-
   border = TRUE,
   top_annotation = column_ha,
   row_km = 4
 )
 
-# -------------------------------
-# save
-
-pdf("output/IPF/Low/IPF.L_markers.pdf",
-    width = 10, height = 15)
-
+pdf("output/IPF/Low/IPF.L_markers.pdf", width = 10, height = 15)
 ComplexHeatmap::draw(ht)
-
 dev.off()
 ```
 
+## 24. Correlation between cell types
 
-
-
-
-
-
-###7correlation
 ```{r}
-
-##correlation for celltype
-
-# 1️⃣ Set identities to cell types
 Idents(IPF.L) <- "Major_Celltype"
-
-# sanity check
 levels(Idents(IPF.L))
-# should show cell type names
 
-# 2️⃣ Average expression per cell type
+# average expression per cell type
 av.expIPL <- AverageExpression(
   IPF.L,
   assays = "RNA",
   slot = "data"
 )$RNA
 
-# 3️⃣ Cell-type correlation matrix
 correlation_matrixIPL <- cor(
   as.matrix(av.expIPL),
   use = "pairwise.complete.obs"
 )
-
-# safety cleanup
 correlation_matrixIPL[is.na(correlation_matrixIPL)] <- 0
 
-# 4️⃣ Save heatmap as PNG
 pdf(
   file = "output/IPF/Low/IPFL_correlation.pdf",
   width = 8,
   height = 10
 )
-
 pheatmap(
   correlation_matrixIPL,
   clustering_method = "ward.D2",
   fontsize_row = 9,
   fontsize_col = 9
 )
-
 dev.off()
-
 ```
 
-
-###7 Class Major_Celltype with family
-
+## 25. Broader cell-type grouping (General)
 
 ```{r}
-#------
-#extract
 unique(IPF.L$Major_Celltype)
 
-#
 IPF.L$General <- recode(IPF.L$Major_Celltype,
-                      "Macrophages" = "Mono/Mac",
-                      "Fibroblasts" = "Fibroblasts",
-                      "Goblet Cells" = "Epithelial Cells",
-                      "CD4" = "CD4",
-                      "Ciliated Cells" = "Epithelial Cells",
-                      "Alveolar Cells" = "Epithelial Cells",
-                      "CD8" = "CD8",
-                      "Proliferating Cells" = "Proliferating Cells",
-                      "Venous Endothelial" = "Endothelial Cells",
-                      "Monocytes" = "Mono/Mac",
-                      "Mast Cells" = "Mast Cells",
-                      "Mural Cells" = "Mural Cells",
-                      "B Cells" = "B Cells",
-                      "Lymphatic Endothelial" = "Endothelial Cells",
-                      "Basal Cells" = "Epithelial Cells"
-                      
+  "Macrophages" = "Mono/Mac",
+  "Fibroblasts" = "Fibroblasts",
+  "Goblet Cells" = "Epithelial Cells",
+  "CD4" = "CD4",
+  "Ciliated Cells" = "Epithelial Cells",
+  "Alveolar Cells" = "Epithelial Cells",
+  "CD8" = "CD8",
+  "Proliferating Cells" = "Proliferating Cells",
+  "Venous Endothelial" = "Endothelial Cells",
+  "Monocytes" = "Mono/Mac",
+  "Mast Cells" = "Mast Cells",
+  "Mural Cells" = "Mural Cells",
+  "B Cells" = "B Cells",
+  "Lymphatic Endothelial" = "Endothelial Cells",
+  "Basal Cells" = "Epithelial Cells"
 )
-
 ```
 
-
-
-##markers that we can have in TLS 
-
+## 26. TLS (tertiary lymphoid structure) marker heatmap
 
 ```{r}
-### TLS markers that we can have in TLS 
+# marker sets per functional group, from genes_TLS.csv
+germinal_center <- c(
+  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
+)
 
+inflammation <- c(
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+  "ICAM1", "VCAM1", "SELE"
+)
 
-# Define markers per group from genes_TLS.csv
-germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
-                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+lymphoid_chemokines <- c(
+  "CXCL13", "CCL21", "CCL19", "CXCL12",
+  "CXCR5", "CCR7", "CXCR4"
+)
 
-inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
-                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
-                  "ICAM1", "VCAM1", "SELE")
+hev <- c(
+  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
+)
 
-lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
-                         "CXCR5", "CCR7", "CXCR4")
+fdc <- c(
+  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+  "CXCL13", "CD54", "ICAM1", "FCER2"
+)
 
-hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
-         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
-
-fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
-         "CXCL13", "CD54", "ICAM1", "FCER2")
-
-# Combine all markers in order
-markers <- unique(c(germinal_center, inflammation, 
-                    lymphoid_chemokines, hev, fdc))
-
-# Filter to genes present in your Seurat object
+markers <- unique(c(
+  germinal_center, inflammation,
+  lymphoid_chemokines, hev, fdc
+))
 markers <- markers[markers %in% rownames(IPF.L)]
 
-# Build group vector in same order
 marker_groups <- case_when(
-  markers %in% germinal_center    ~ "Germinal Center",
-  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% germinal_center ~ "Germinal Center",
+  markers %in% inflammation ~ "Inflammation & Cytokines",
   markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
-  markers %in% hev                ~ "HEV",
-  markers %in% fdc                ~ "FDC"
+  markers %in% hev ~ "HEV",
+  markers %in% fdc ~ "FDC"
 )
 names(marker_groups) <- markers
 
-# Group colors
 group_cols <- c(
-  "Germinal Center"         = "#2166AC",
-  "Inflammation & Cytokines"= "#D6604D",
-  "Lymphoid Chemokines"     = "#35978F",
-  "HEV"                     = "#8073AC",
-  "FDC"                     = "#E08214"
+  "Germinal Center" = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines" = "#35978F",
+  "HEV" = "#8073AC",
+  "FDC" = "#E08214"
 )
 
-# Extract expression and percent data
+# percent of cells expressing each marker, per cell type
 Idents(IPF.L) <- "General"
 DefaultAssay(IPF.L) <- "RNA"
 expr_mat <- GetAssayData(IPF.L, layer = "data")
@@ -1623,6 +1349,7 @@ avg_exp <- AverageExpression(
 exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 exp_mat[is.infinite(exp_mat)] <- NA
 
+# drop markers with no expression in any cell type
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
@@ -1634,11 +1361,10 @@ exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# Color function
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Bubble cell function
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -1647,7 +1373,6 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat_scaled)
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
@@ -1660,7 +1385,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# Row annotation
 row_ha <- ComplexHeatmap::rowAnnotation(
   Group = marker_groups,
   col = list(Group = group_cols),
@@ -1675,7 +1399,6 @@ row_ha <- ComplexHeatmap::rowAnnotation(
   )
 )
 
-# Heatmap
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -1695,79 +1418,43 @@ ht <- ComplexHeatmap::Heatmap(
   row_gap = unit(2, "mm")
 )
 
-pdf("output/IPF/Low/TLS_markers.pdf",
-    width = 8, height = 10)
+pdf("output/IPF/Low/TLS_markers.pdf", width = 8, height = 10)
 ComplexHeatmap::draw(ht, merge_legend = TRUE)
 dev.off()
-
-
-
-
 ```
 
-
-
+## 27. Export for gene regulatory network analysis (SCENIC)
 
 ```{r}
-#####for pyscenic 
+# Export the raw counts as a sparse matrix + gene/barcode lists, so they can
+# be imported by pySCENIC in the terminal.
 expr <- GetAssayData(IPF.L, assay = "RNA", layer = "counts")
 
 writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Low/input/matrix.mtx")
 
 write.table(rownames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Low/input/genes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Low/input/genes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 
 write.table(colnames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Low/input/barcodes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
-
-
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/IPF/Low/input/barcodes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 ```
 
-
-
-
-
-
+## 28. Save the processed object
 
 ```{r}
-#CSV 
-write.csv(IPF.L@meta.data, 
-          file = "data/process/SeuratObjects/IPF/Lower/IPF.L_metadata.csv",
-          row.names = TRUE)
-##save
+write.csv(IPF.L@meta.data,
+  file = "data/process/SeuratObjects/IPF/Lower/IPF.L_metadata.csv",
+  row.names = TRUE
+)
+
 saveRDS(IPF.L, file = "data/process/SeuratObjects/IPF/Lower/IPF.L_Final.rds")
-
-## run it later to load all 
-IPF.L = readRDS("data/process/SeuratObjects/IPF/Lower/IPF.L_Final.rds")
-
-
+IPF.L <- readRDS("data/process/SeuratObjects/IPF/Lower/IPF.L_Final.rds")
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

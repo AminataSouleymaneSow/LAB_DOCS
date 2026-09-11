@@ -1,14 +1,13 @@
 ---
-title: "R Notebook"
+title: "Type 1 Diabetes - Processing and Annotation"
 output: html_notebook
 ---
-################################################################################################################################
-#####ANALYSE OF PANCREAS TYPE 1 DIABETES#######################################################################################
-################################################################################################################################
 
-```{r  setup, include=FALSE}
 
-##################PACKAGES
+
+## 1. Packages and setup
+
+```{r setup, include=FALSE}
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -20,141 +19,116 @@ library(cowplot)
 library(BiocManager)
 library(devtools)
 
-
- #### the wd
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
-
 ```
 
+## 2. Load raw data and subset to Type 1 Diabetes samples
 
-
-###1 LOAD the data
 ```{r}
-##load the data and set only the T1D
-T1D=readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Pancreas Type 1 Diabetes/Pancreas Type 1 Diabetes.rds")
+# the pancreas dataset contains several disease groups - keep only T1D
+T1D <- readRDS("../../tomas.gomes/processed.data/autoimm_scrna_TomasGuerreiro/Datasets/Pancreas Type 1 Diabetes/Pancreas Type 1 Diabetes.rds")
 
-# check default assay
+# check default assay, set to RNA if not already
 DefaultAssay(T1D)
-# if not RNA, set as RNA
-DefaultAssay(T1D) = "RNA"
+DefaultAssay(T1D) <- "RNA"
 
-setT1D = c("T1D_ 1","T1D_ 2","T1D_ 3","T1D_ 4","T1D_ 5","T1D_ 6","T1D_ 7","T1D_ 8","T1D_ 9")
-T1D = subset (T1D, subset = disease_id %in% setT1D)
-saveRDS (T1D,file = "data/process/SeuratObjects/T1Diabetes/T1D_raw.rds")
-
+setT1D <- c("T1D_ 1", "T1D_ 2", "T1D_ 3", "T1D_ 4", "T1D_ 5", "T1D_ 6", "T1D_ 7", "T1D_ 8", "T1D_ 9")
+T1D <- subset(T1D, subset = disease_id %in% setT1D)
+saveRDS(T1D, file = "data/process/SeuratObjects/T1D/T1D_raw.rds")
 ```
 
+## 3. Quality control
 
-###12-FOR THE QC
 ```{r}
-##load and process
-T1D[["percent.mt"]]=PercentageFeatureSet(T1D, pattern = "^MT-")
-Idents(T1D)="x"
-T1D$x="All"
-VlnPlot(T1D, features = c("nCount_RNA","nFeature_RNA","percent.mt"), ncol = 3, log = TRUE, group.by = "x")
-T1D=subset(T1D, subset=nFeature_RNA >300 & nFeature_RNA <7000 & percent.mt<10)
-
-
+# QC thresholds set based on this dataset's own distribution
+T1D[["percent.mt"]] <- PercentageFeatureSet(T1D, pattern = "^MT-")
+Idents(T1D) <- "x"
+T1D$x <- "All"
+VlnPlot(T1D, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, log = TRUE, group.by = "x")
+T1D <- subset(T1D, subset = nFeature_RNA > 300 & nFeature_RNA < 7000 & percent.mt < 10)
 ```
 
+## 4. Normalization, scaling, and PCA
 
-###3 statistics
 ```{r}
-##norm, fvf,scale,runpca
-
-T1D=NormalizeData(T1D)
-T1D=FindVariableFeatures(T1D)
-T1D=ScaleData(T1D,vars.to.regress = c("nCount_RNA","percent.mt"),features = VariableFeatures(object = T1D))
-T1D=RunPCA(T1D, features = VariableFeatures(object = T1D))
+T1D <- NormalizeData(T1D)
+T1D <- FindVariableFeatures(T1D)
+T1D <- ScaleData(T1D, vars.to.regress = c("nCount_RNA", "percent.mt"), features = VariableFeatures(object = T1D))
+T1D <- RunPCA(T1D, features = VariableFeatures(object = T1D))
 ElbowPlot(T1D, ndims = 50, reduction = "pca")
-T1D=RunUMAP(T1D, dims = 1:30)
-DimPlot(T1D,reduction = "umap", label = TRUE)
-
+T1D <- RunUMAP(T1D, dims = 1:30)
+DimPlot(T1D, reduction = "umap", label = TRUE)
 ```
 
+## 5. Harmony integration and clustering resolutions
 
-###4.integration
 ```{r}
-
-#----------
 library(harmony)
-T1D=RunHarmony(T1D,group.by.vars = "sample",orig.reduction = "pca",dims.use = 1:30  )
-T1D = RunUMAP(T1D, reduction = "harmony", dims= 1:30, reduction.name = "umap.harmony")
+T1D <- RunHarmony(T1D, group.by.vars = "sample", orig.reduction = "pca", dims.use = 1:30)
+T1D <- RunUMAP(T1D, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
 
-
-#for the resolution
-T1D=FindNeighbors(T1D,reduction= "harmony",dims = 1:30)
+# scan a range of resolutions before picking one
+T1D <- FindNeighbors(T1D, reduction = "harmony", dims = 1:30)
 for (res in seq(0.2, 1, by = 0.1)) {
-  T1D=FindClusters(T1D, resolution = res)
-  colname=paste0("res_", res)
-  T1D[[colname]]=T1D$seurat_clusters
+  T1D <- FindClusters(T1D, resolution = res)
+  colname <- paste0("res_", res)
+  T1D[[colname]] <- T1D$seurat_clusters
 }
-res_cols=grep("^res_", colnames(T1D@meta.data), value = TRUE)
+res_cols <- grep("^res_", colnames(T1D@meta.data), value = TRUE)
+
 for (res in res_cols) {
-  p=DimPlot(T1D, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste(res))
+  p <- DimPlot(T1D, group.by = res, label = TRUE, reduction = "umap.harmony") +
+    ggtitle(paste(res))
   print(p)
-  readline(prompt="Press [Enter] to see the next resolution...")
-  
 }
 
-#save all
+# save all resolutions to a single PDF for visual comparison
 pdf("output/T1D/All_resolutions_UMAP.pdf", width = 6, height = 5)
 for (res in res_cols) {
   p <- DimPlot(T1D, group.by = res, label = TRUE, reduction = "umap.harmony") +
-       ggtitle(paste("Resolution:", res))
+    ggtitle(paste("Resolution:", res))
   print(p)
 }
 dev.off()
 
-#save 
-p=DimPlot(T1D,group.by = "res_0.6",label = TRUE,reduction = "umap.harmony" )+ ggtitle("Resolution: 0.6") +NoLegend()+
-labs(x = "UMAP.h", y = "UMAP.h") 
-
-ggsave(filename = "output/T1D/T1D_resolution.pdf",plot = p,width = 10,height = 8,dpi = 300)
-
-
+# resolution 0.6 was chosen for downstream clustering
+p <- DimPlot(T1D, group.by = "res_0.6", label = TRUE, reduction = "umap.harmony") +
+  ggtitle("Resolution: 0.6") +
+  NoLegend() +
+  labs(x = "UMAP.h", y = "UMAP.h")
+ggsave(filename = "output/T1D/T1D_resolution.pdf", plot = p, width = 10, height = 8, dpi = 300)
 ```
 
+## 6. Clustering and marker genes
 
-##5-cluster and markers
 ```{r}
+T1D <- FindNeighbors(T1D, reduction = "harmony", dims = 1:30)
+T1D <- FindClusters(T1D, resolution = 0.6, cluster.name = "harmony_clusters")
 
-###clusters
-T1D=FindNeighbors(T1D,reduction= "harmony",dims = 1:30)
-T1D=FindClusters(T1D, resolution = 0.6,cluster.name = "harmony_clusters")
-#markers
-T1Dmarkers=FindAllMarkers(T1D,only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
-T1Dmarkers=T1Dmarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
-
-
-
-
+# markers per cluster, used below to name the cell types
+T1Dmarkers <- FindAllMarkers(T1D, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+T1Dmarkers <- T1Dmarkers %>% filter(p_val_adj < 0.05, abs(avg_log2FC) > 0.25)
 ```
 
-
-
-
-
-###6 annotation
+## 7. Cell type annotation
 
 ```{r}
-genes = c(
+genes <- c(
   # Acinar cells
-  "PRSS1","CPA1","PTF1A",
+  "PRSS1", "CPA1", "PTF1A",
 
   # Alpha cells
-  "GCG","IRX2","ARX",
+  "GCG", "IRX2", "ARX",
 
   # Beta cells
-  "INS","MAFA","NKX6-1",
+  "INS", "MAFA", "NKX6-1",
 
   # Delta cells
-  "SST","LEPR",
+  "SST", "LEPR",
 
   # Ductal cells
-  "KRT19","SOX9","CFTR",
+  "KRT19", "SOX9", "CFTR",
 
   # Endothelial cells
   "VWF",
@@ -163,33 +137,34 @@ genes = c(
   "GHRL",
 
   # Immune cells
-  "NCF2","PTPRC","CD14", "FCGR3A","CD68", "LYZ", "CSF1R",
-  
+  "NCF2", "PTPRC", "CD14", "FCGR3A", "CD68", "LYZ", "CSF1R",
+
   # CD4 T cells
   "CD4", "TCF7", "SELL", "CD3D", "CD3E", "TRAC",
-  
+
   # CD8 T cells
-  "CD8A", "CD8B", "GZMB", 
+  "CD8A", "CD8B", "GZMB",
 
   # B cells
-  "MS4A1", "CD79A", "CD79B", 
-  
-  # plasma cells
+  "MS4A1", "CD79A", "CD79B",
+
+  # Plasma cells
   "MZB1", "JCHAIN",
 
   # PP (gamma) cells
   "PPY",
-  
-  # "Pericytes"
+
+  # Pericytes
   "RGS5",
 
   # Stellate cells
   "COL1A1",
-  #fibroblasts
+
+  # Fibroblasts
   "DCN"
 )
 
-p=DotPlot(
+p <- DotPlot(
   T1D,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -202,61 +177,47 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "harmony_clusters") + RotatedAxis() 
+  cluster.idents = TRUE,
+  group.by = "harmony_clusters"
+) + RotatedAxis()
 p
-#save
 ggsave(filename = "output/T1D/T1D_cluster.pdf", plot = p, width = 12, height = 8)
-
 ```
 
-
-
 ```{r}
-l = FeaturePlot(T1D, features = unique(genes), combine = F, order = T, reduction = "umap.harmony")
-names(l) = unique(genes)
+# per-gene expression maps, for interactive inspection of individual markers
+l <- FeaturePlot(T1D, features = unique(genes), combine = FALSE, order = TRUE, reduction = "umap.harmony")
+names(l) <- unique(genes)
 ```
 
-
-
-
-
-
-
-
-
 ```{r}
-#------cluster_specifique_name
-##1celltype
-Idents(T1D)="harmony_clusters"
-cluster_name_x=c(
-  "0"  = "Ductal Cells_0" ,
-  "1"  = "Acinar Cells_1"    ,
-  "2"  = "Alpha Cells_2"            ,
-  "3"  = "Acinar Cells_3"      ,
-  "4"  = "Alpha Cells_4"    ,
-  "5"  = "Delta Cells_5"            ,
-  "6"  = "Acinar Cells_6"            ,
-  "7"  = "Endothelial Cells_7"            ,
-  "8"  = "Fibroblasts_8"             ,
-  "9"  = "Acinar Cells_9"               ,
-  "10" = "Alpha Cells_10"        ,
-  "11" = "Ductal Cells_11"    ,
-  "12" = "Mural Cells_12"    ,
-  "13" = "Macrophages_13"           ,
-  "14" = "Acinar Cells_14"             ,
-  "15" = "Ductal Cells_15"  ,
-  "16" ="Acinar Cells_16",
-  "17" ="Acinar Cells_17",
+# cell type labels
+Idents(T1D) <- "harmony_clusters"
+cluster_name_x <- c(
+  "0" = "Ductal Cells_0",
+  "1" = "Acinar Cells_1",
+  "2" = "Alpha Cells_2",
+  "3" = "Acinar Cells_3",
+  "4" = "Alpha Cells_4",
+  "5" = "Delta Cells_5",
+  "6" = "Acinar Cells_6",
+  "7" = "Endothelial Cells_7",
+  "8" = "Fibroblasts_8",
+  "9" = "Acinar Cells_9",
+  "10" = "Alpha Cells_10",
+  "11" = "Ductal Cells_11",
+  "12" = "Mural Cells_12",
+  "13" = "Macrophages_13",
+  "14" = "Acinar Cells_14",
+  "15" = "Ductal Cells_15",
+  "16" = "Acinar Cells_16",
+  "17" = "Acinar Cells_17",
   "18" = "Fibroblasts_18"
-  
 )
+T1D <- RenameIdents(T1D, cluster_name_x)
+T1D$CellType <- Idents(T1D)
 
-T1D=RenameIdents(T1D, cluster_name_x)
-T1D$CellType=Idents(T1D)
-
-#plot
-p=DotPlot(
+p <- DotPlot(
   T1D,
   features = genes,
   cols = c("lightgrey", "blue"),
@@ -269,68 +230,54 @@ p=DotPlot(
   scale.by = "radius",
   scale.min = NA,
   scale.max = NA,
-  cluster.idents = T, 
-  group.by = "CellType") + RotatedAxis() 
+  cluster.idents = TRUE,
+  group.by = "CellType"
+) + RotatedAxis()
 p
-#save
 ggsave(filename = "output/T1D/T1D_cluster_name.pdf", plot = p, width = 13, height = 10)
-
-
-
-
-
 ```
 
-
-
-
-
-
 ```{r}
+# major cell types (clusters of the same type merged, no cluster number)
+Idents(T1D) <- "harmony_clusters"
+cluster_name <- c(
+  "0" = "Ductal Cells",
+  "1" = "Acinar Cells",
+  "2" = "Alpha Cells",
+  "3" = "Acinar Cells",
+  "4" = "Alpha Cells",
+  "5" = "Delta Cells",
+  "6" = "Acinar Cells",
+  "7" = "Endothelial Cells",
+  "8" = "Fibroblasts",
+  "9" = "Acinar Cells",
+  "10" = "Alpha Cells",
+  "11" = "Ductal Cells",
+  "12" = "Mural Cells",
+  "13" = "Macrophages",
+  "14" = "Acinar Cells",
+  "15" = "Ductal Cells",
+  "16" = "Acinar Cells",
+  "17" = "Acinar Cells",
+  "18" = "Fibroblasts"
+)
+T1D <- RenameIdents(T1D, cluster_name)
+T1D$Major_Celltype <- Idents(T1D)
 
-
-##1celltype
-Idents(T1D)="harmony_clusters"
-cluster_name=c(
- "0"  = "Ductal Cells" ,
-  "1"  = "Acinar Cells"    ,
-  "2"  = "Alpha Cells"            ,
-  "3"  = "Acinar Cells"      ,
-  "4"  = "Alpha Cells"    ,
-  "5"  = "Delta Cells"            ,
-  "6"  = "Acinar Cells"            ,
-  "7"  = "Endothelial Cells"            ,
-  "8"  = "Fibroblasts"             ,
-  "9"  = "Acinar Cells"               ,
-  "10" = "Alpha Cells"        ,
-  "11" = "Ductal Cells"    ,
-  "12" = "Mural Cells"    ,
-  "13" = "Macrophages"           ,
-  "14" = "Acinar Cells"             ,
-  "15" = "Ductal Cells"  ,
-  "16" ="Acinar Cells",
-  "17" ="Acinar Cells",
-  "18" = "Fibroblasts"      
-             
+celltype_cols <- c(
+  "Acinar Cells" = "coral1",
+  "Alpha Cells" = "mediumorchid1",
+  "Ductal Cells" = "mistyrose3",
+  "Delta Cells" = "#762A83",
+  "Endothelial Cells" = "#E31A1C",
+  "Stellate Cells" = "yellow",
+  "Macrophages" = "orangered",
+  "Fibroblasts" = "cyan",
+  "Mural Cells" = "#1F78B4"
 )
 
-T1D=RenameIdents(T1D, cluster_name)
-T1D$Major_Celltype=Idents(T1D)
-##2color
-celltype_cols=c(
-  "Acinar Cells"            = "coral1",  
-  "Alpha Cells"             = "mediumorchid1", 
-  "Ductal Cells"            = "mistyrose3",  
-  "Delta Cells"             = "#762A83",
-  "Endothelial Cells"       = "#E31A1C",
-  "Stellate Cells"          = "yellow",
-  "Macrophages"             = "orangered",
-  "Fibroblasts"             ="cyan",
-  "Mural Cells"             ="#1F78B4"
-  )
-
+# UMAP with a label placed at each cell type's centroid
 colnames(Embeddings(T1D, "umap.harmony"))
-##3 center
 umap_df <- as.data.frame(Embeddings(T1D, "umap.harmony"))
 umap_df$Major_Celltype <- T1D$Major_Celltype
 
@@ -339,8 +286,9 @@ centers <- aggregate(
   data = umap_df,
   FUN = median
 )
-##plot
-fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
+
+library(ggrepel)
+fig1a <- ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype)) +
   geom_point(size = 0.3) +
   scale_color_manual(values = celltype_cols) +
   geom_label_repel(
@@ -362,31 +310,12 @@ fig1a = ggplot(umap_df, aes(umapharmony_1, umapharmony_2, color = Major_Celltype
   ) +
   labs(x = "UMAP.h", y = "UMAP.h")
 fig1a
-ggsave(ggsave(filename = "output/T1D/T1D_cellType.pdf", plot = fig1a, width = 12, height = 10))
-
+ggsave(filename = "output/T1D/T1D_cellType.pdf", plot = fig1a, width = 12, height = 10)
 ```
 
+## 8. Correlation and marker expression heatmaps
 
-
-
-
-
-
-
-##6Plot with markers and Correlation
 ```{r}
-
-## ===============================
-## ComplexHeatmap Dot Heatmap
-## ===============================
-
-## ===============================
-## ComplexHeatmap Dot Heatmap
-## ===============================
-
-library(Seurat)
-library(dplyr)
-library(Matrix)
 library(circlize)
 library(ComplexHeatmap)
 library(viridis)
@@ -394,37 +323,27 @@ library(grid)
 library(plyr)
 library(pheatmap)
 
-
-
-# -------------------------------
-# 1️⃣ Correlation heatmap (optional)
-# -------------------------------
-
-# Average expression per cluster (SCT)
+# average expression per cluster, then correlation between clusters
 av.expSS <- AverageExpression(
   T1D,
   assays = "RNA",
   slot = "data"
 )$RNA
 
-# Correlation matrix
 correlation_matrixSS <- cor(
   as.matrix(av.expSS),
   use = "pairwise.complete.obs"
 )
-
-# Replace NA / NaN
 correlation_matrixSS[is.na(correlation_matrixSS)] <- 0
 correlation_matrixSS[is.nan(correlation_matrixSS)] <- 0
 
-# Add tiny jitter to avoid identical breaks
+# small jitter so identical values don't break pheatmap's clustering
 set.seed(1)
 epsilon <- 1e-10
 correlation_matrixSS_jitter <- correlation_matrixSS +
   matrix(runif(length(correlation_matrixSS), 0, epsilon),
-         nrow = nrow(correlation_matrixSS))
-
-# Save correlation heatmap as PNG
+    nrow = nrow(correlation_matrixSS)
+  )
 
 png(
   filename = "output/T1D/T1D_correlation.png",
@@ -432,7 +351,6 @@ png(
   height = 2200,
   res = 300
 )
-#---
 pheatmap(
   correlation_matrixSS_jitter,
   clustering_method = "ward.D2",
@@ -440,18 +358,14 @@ pheatmap(
   fontsize_col = 8
 )
 dev.off()
-# -------------------------------
-# 2️⃣ Dot heatmap (ComplexHeatmap)
-# -------------------------------
 
-
-
-T1D$celltype <- mapvalues(as.character(Idents(T1D)), 
-                          from = names(cluster_name), 
-                          to = cluster_name)
+# marker dot-heatmap: dot size = percent of cells expressing, color = scaled expression
+T1D$celltype <- mapvalues(as.character(Idents(T1D)),
+  from = names(cluster_name),
+  to = cluster_name
+)
 Idents(T1D) <- "celltype"
 
-# Expression and percent matrices
 DefaultAssay(T1D) <- "RNA"
 expr_mat <- GetAssayData(T1D, layer = "data")
 
@@ -461,11 +375,12 @@ percent_mat <- sapply(levels(Idents(T1D)), function(ct) {
 })
 percent_mat <- as.matrix(percent_mat)
 
-avg_exp <- AverageExpression(T1D, features = genes, assays = "RNA",
-                             layer = "data", return.seurat = FALSE)$RNA
+avg_exp <- AverageExpression(T1D,
+  features = genes, assays = "RNA",
+  layer = "data", return.seurat = FALSE
+)$RNA
 exp_mat <- as.matrix(avg_exp[genes, colnames(percent_mat)])
 
-# Clean Inf / NA
 exp_mat[is.infinite(exp_mat)] <- NA
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
@@ -473,11 +388,9 @@ percent_mat <- percent_mat[keep, ]
 exp_mat[is.na(exp_mat)] <- 0
 mode(exp_mat) <- "numeric"
 
-# Color function
 q <- quantile(exp_mat, c(0.05, 0.5, 0.95))
 col_fun <- colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Dot function
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid.circle(
     x = x, y = y,
@@ -486,25 +399,20 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat)
 cols <- viridis(length(celltypes))
 names(cols) <- celltypes
 column_ha <- HeatmapAnnotation(celltype = celltypes, col = list(celltype = cols))
 
-# Create heatmap object
+# log1p + per-gene z-score, to bring expression to a comparable range
+exp_mat_scaled <- log1p(exp_mat)
+exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
+exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# log1p transform (log(1+x)) to bring values to reasonable range
-exp_mat_scaled=log1p(exp_mat)
-
-# optional: z-score per gene (row)
-exp_mat_scaled=t(scale(t(exp_mat_scaled)))
-exp_mat_scaled[is.na(exp_mat_scaled)]= 0
-
-ht=Heatmap(
+ht <- Heatmap(
   exp_mat_scaled,
   name = "Expression",
-  col = col_fun,   # you can regenerate col_fun for scaled values
+  col = col_fun,
   rect_gp = gpar(type = "none"),
   cell_fun = cell_fun,
   row_names_gp = gpar(fontsize = 6),
@@ -514,68 +422,86 @@ ht=Heatmap(
   row_km = 4
 )
 
-# -------------------------------
-# 3️⃣ Save ComplexHeatmap as PNG
-# -------------------------------
-
-pdf(file = "output/T1D/T1D_markers.pdf",
-    width = 12, height = 10)
+pdf(
+  file = "output/T1D/T1D_markers.pdf",
+  width = 12, height = 10
+)
 draw(ht)
 dev.off()
-
-
 ```
 
+## 9.cell-type grouping (General)
 
+```{r}
+unique(T1D$Major_Celltype)
 
+# broader lineage grouping, used as the identity level for downstream CCC analysis
+T1D$General <- recode(T1D$Major_Celltype,
+  "Ductal Cells" = "Epithelial Cells",
+  "Acinar Cells" = "Epithelial Cells",
+  "Alpha Cells" = "Endocrine Cells",
+  "Fibroblasts" = "Fibroblasts",
+  "Endothelial Cells" = "Endothelial Cells",
+  "Delta Cells" = "Endocrine Cells",
+  "Mural Cells" = "Mural Cells",
+  "Macrophages" = "Mono/Mac"
+)
+```
 
-##markers that we can have in TLS 
+## 10. TLS (tertiary lymphoid structure) marker heatmap
+
 ```{r, fig.width=12, fig.height=8}
+# marker sets per functional group, from genes_TLS.csv
+germinal_center <- c(
+  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
+  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
+)
 
-# Define markers per group from genes_TLS.csv
-germinal_center <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", 
-                     "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation <- c(
+  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
+  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
+  "ICAM1", "VCAM1", "SELE"
+)
 
-inflammation <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", 
-                  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", 
-                  "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c(
+  "CXCL13", "CCL21", "CCL19", "CXCL12",
+  "CXCR5", "CCR7", "CXCR4"
+)
 
-lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", 
-                         "CXCR5", "CCR7", "CXCR4")
+hev <- c(
+  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
+  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
+)
 
-hev <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", 
-         "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc <- c(
+  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
+  "CXCL13", "CD54", "ICAM1", "FCER2"
+)
 
-fdc <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", 
-         "CXCL13", "CD54", "ICAM1", "FCER2")
-
-# Combine all markers in order
-markers <- unique(c(germinal_center, inflammation, 
-                    lymphoid_chemokines, hev, fdc))
-
-# Filter to genes present in your Seurat object
+markers <- unique(c(
+  germinal_center, inflammation,
+  lymphoid_chemokines, hev, fdc
+))
 markers <- markers[markers %in% rownames(T1D)]
 
-# Build group vector in same order
 marker_groups <- case_when(
-  markers %in% germinal_center    ~ "Germinal Center",
-  markers %in% inflammation       ~ "Inflammation & Cytokines",
+  markers %in% germinal_center ~ "Germinal Center",
+  markers %in% inflammation ~ "Inflammation & Cytokines",
   markers %in% lymphoid_chemokines ~ "Lymphoid Chemokines",
-  markers %in% hev                ~ "HEV",
-  markers %in% fdc                ~ "FDC"
+  markers %in% hev ~ "HEV",
+  markers %in% fdc ~ "FDC"
 )
 names(marker_groups) <- markers
 
-# Group colors
 group_cols <- c(
-  "Germinal Center"         = "#2166AC",
-  "Inflammation & Cytokines"= "#D6604D",
-  "Lymphoid Chemokines"     = "#35978F",
-  "HEV"                     = "#8073AC",
-  "FDC"                     = "#E08214"
+  "Germinal Center" = "#2166AC",
+  "Inflammation & Cytokines" = "#D6604D",
+  "Lymphoid Chemokines" = "#35978F",
+  "HEV" = "#8073AC",
+  "FDC" = "#E08214"
 )
 
-# Extract expression and percent data
+# percent of cells expressing each marker, per cell type
 Idents(T1D) <- "General"
 DefaultAssay(T1D) <- "RNA"
 expr_mat <- GetAssayData(T1D, layer = "data")
@@ -586,6 +512,7 @@ percent_mat <- sapply(levels(Idents(T1D)), function(ct) {
 })
 percent_mat <- as.matrix(percent_mat)
 
+# average expression per marker, per cell type
 avg_exp <- AverageExpression(
   T1D,
   features = markers,
@@ -597,6 +524,7 @@ avg_exp <- AverageExpression(
 exp_mat <- as.matrix(avg_exp[markers, colnames(percent_mat)])
 exp_mat[is.infinite(exp_mat)] <- NA
 
+# drop markers with no expression in any cell type
 keep <- rowSums(is.na(exp_mat)) < ncol(exp_mat)
 exp_mat <- exp_mat[keep, ]
 percent_mat <- percent_mat[keep, ]
@@ -608,11 +536,10 @@ exp_mat_scaled <- log1p(exp_mat)
 exp_mat_scaled <- t(scale(t(exp_mat_scaled)))
 exp_mat_scaled[is.na(exp_mat_scaled)] <- 0
 
-# Color function
 q <- quantile(exp_mat_scaled, c(0.05, 0.5, 0.95))
 col_fun <- circlize::colorRamp2(q, c("navy", "white", "firebrick"))
 
-# Bubble cell function
+# bubble size = percent expressing, color = scaled expression
 cell_fun <- function(j, i, x, y, w, h, fill) {
   grid::grid.circle(
     x = x, y = y,
@@ -621,7 +548,6 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
-# Column annotation
 celltypes <- colnames(exp_mat_scaled)
 cols <- grDevices::colorRampPalette(
   RColorBrewer::brewer.pal(8, "Set2")
@@ -634,7 +560,6 @@ column_ha <- ComplexHeatmap::HeatmapAnnotation(
   show_annotation_name = FALSE
 )
 
-# Row annotation
 row_ha <- ComplexHeatmap::rowAnnotation(
   Group = marker_groups,
   col = list(Group = group_cols),
@@ -649,7 +574,6 @@ row_ha <- ComplexHeatmap::rowAnnotation(
   )
 )
 
-# Heatmap
 ht <- ComplexHeatmap::Heatmap(
   exp_mat_scaled,
   name = "Expression",
@@ -669,75 +593,37 @@ ht <- ComplexHeatmap::Heatmap(
   row_gap = unit(2, "mm")
 )
 
-pdf("output/T1D/TLS_markers.pdf",
-    width = 8, height = 10)
+pdf("output/T1D/TLS_markers.pdf", width = 8, height = 10)
 ComplexHeatmap::draw(ht, merge_legend = TRUE)
 dev.off()
-
- 
 ```
 
-
-###7 Class Major_Celltype with family
-
+## 11. Export for pySCENIC
 
 ```{r}
-#------
-#extract
-unique(T1D$Major_Celltype)
-
-#
-T1D$General <- recode(T1D$Major_Celltype,
-                      "Ductal Cells"="Epithelial Cells" ,
-                      "Acinar Cells" ="Epithelial Cells",
-                      "Alpha Cells" ="Endocrine Cells" ,
-                      "Fibroblasts" ="Fibroblasts",
-                      "Endothelial Cells"="Endothelial Cells",
-                      "Delta Cells"  ="Endocrine Cells",
-                      "Mural Cells"  ="Mural Cells",
-                      "Macrophages" ="Mono/Mac"
-)
-
-```
-
-
-
-```{r}
-#pyscenic
-#####for pyscenic 
+# raw counts as a sparse matrix + gene/barcode lists, for pySCENIC in the terminal
 expr <- GetAssayData(T1D, assay = "RNA", layer = "counts")
 
 writeMM(expr, "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/matrix.mtx")
 
 write.table(rownames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/genes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/genes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 
 write.table(colnames(expr),
-            file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/barcodes.tsv",
-            quote = FALSE,
-            row.names = FALSE,
-            col.names = FALSE)
-
-
+  file = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS/GRN_SCENIC/T1D/input/barcodes.tsv",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
 ```
 
-
-
-
-
-
-
-
-
+## 12. Save final metadata and processed object
 
 ```{r}
-
-##save
-
-
 keep_cols <- c(
   "orig.ident",
   "nCount_RNA",
@@ -748,46 +634,10 @@ keep_cols <- c(
   "Major_Celltype",
   "General"
 )
-
 T1D@meta.data <- T1D@meta.data[, keep_cols]
 
-#CSV 
-write.csv(T1D@meta.data,file = "data/process/SeuratObjects/T1D/T1D.metadata.csv",row.names = TRUE) 
-          
-##rds
-saveRDS(T1D, file="data/process/SeuratObjects/T1D/T1D_process.rds")
+write.csv(T1D@meta.data, file = "data/process/SeuratObjects/T1D/T1D.metadata.csv", row.names = TRUE)
 
-
-#load it
-T1D = readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
-
-
-
+saveRDS(T1D, file = "data/process/SeuratObjects/T1D/T1D_process.rds")
 
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
