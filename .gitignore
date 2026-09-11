@@ -5,7 +5,13 @@ CCC/
 data/
 output/
 CCC/*/output/
-GRN_SCENIC/
+GRN_SCENIC/*
+GRN_SCENIC/MS/
+GRN_SCENIC/MS/*
+GRN_SCENIC/MS/Code/
+GRN_SCENIC/MS/Code/*
+GRN_SCENIC/run_all.sh
+GRN_SCENIC/loom_analysis.py
 *.rds
 *.RDS
 *.nb.html
