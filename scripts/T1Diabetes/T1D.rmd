@@ -639,5 +639,6 @@ T1D@meta.data <- T1D@meta.data[, keep_cols]
 write.csv(T1D@meta.data, file = "data/process/SeuratObjects/T1D/T1D.metadata.csv", row.names = TRUE)
 
 saveRDS(T1D, file = "data/process/SeuratObjects/T1D/T1D_process.rds")
+T1D=readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
 
 ```

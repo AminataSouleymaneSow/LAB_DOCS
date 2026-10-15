@@ -12,6 +12,7 @@ output: html_notebook
 ## 1. Packages and setup
 
 ```{r setup, include=FALSE}
+
 library(Seurat)
 library(Matrix)
 library(dplyr)
@@ -30,6 +31,7 @@ knitr::opts_knit$set(root.dir = "/mnt/nfs/WORKSP/aminata.sow/LAB_DOCS")
 ## 2. Load per-disease processed objects
 
 ```{r}
+
 MS <- readRDS("data/process/SeuratObjects/MS/MS_process.rds")
 RA <- readRDS("data/process/SeuratObjects/RA/RA_process.rds")
 SS <- readRDS("data/process/SeuratObjects/SS/SS_process.rds")
@@ -39,6 +41,7 @@ T1D <- readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
 SScILD.U <- readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
 SScILD.L <- readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 SjD <- readRDS("data/process/SeuratObjects/SjD/SjD.rds")
+
 ```
 
 ## 3. Merge into one combined object
@@ -110,12 +113,13 @@ Fu <- RunUMAP(Fu, reduction = "harmony", dims = 1:20, reduction.name = "umap.har
 
 p <- DimPlot(Fu, reduction = "umap.harmony", group.by = "orig.ident", label = FALSE)
 p <- p + labs(x = "UMAP.h", y = "UMAP.h", title = NULL)
-ggsave(filename = "output/Fusion/UMAP.pdf", width = 10, height = 8, plot = p)
+
 ```
 
 ## 6. UMAP colored by disease
 
 ```{r}
+
 # convert to factor without a legend title
 Fu$orig.ident <- factor(Fu$orig.ident)
 names(attributes(Fu$orig.ident)$levels) <- NULL
@@ -144,45 +148,20 @@ P <- DimPlot(
 ) +
   theme(
     aspect.ratio = 1,
-    legend.text = element_text(size = 12),
+    legend.text = element_text(size = 12, face = "bold", color = "black"),
     legend.position = "right"
   ) +
   labs(title = NULL)
 
 P <- P + labs(x = "UMAP.h", y = "UMAP.h")
-ggsave(filename = "output/Fusion/disease.pdf", plot = P, height = 15, width = 10)
+out_path <- "output/Fusion/au_UMAP.pdf"
+dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+ggsave(filename = out_path, plot = P, height = 8, width = 12)
 
-# second version of the same plot, with an alternate color palette
-disease_colors <- c(
-  "MS"       = "darkolivegreen3",
-  "RA"       = "red3",
-  "SS"       = "orangered",
-  "IPF.U"    = "cyan",
-  "IPF.L"    = "cyan",
-  "T1D"      = "darkred",
-  "SScILD.U" = "gold",
-  "SScILD.L" = "gold",
-  "SjD"      = "darkblue"
-)
 
-P <- DimPlot(
-  Fu,
-  reduction = "umap.harmony",
-  group.by = "orig.ident",
-  label = FALSE,
-  cols = disease_colors,
-  raster = TRUE
-) +
-  theme(
-    aspect.ratio = 1,
-    legend.text = element_text(size = 12),
-    legend.position = "right"
-  ) +
-  labs(title = NULL)
-
-P <- P + labs(x = "UMAP.h", y = "UMAP.h")
-ggsave(filename = "output/Fusion/disease2.pdf", plot = P, height = 8, width = 12)
 ```
+
+
 
 ## 7. UMAP colored by major cell type
 
@@ -425,7 +404,288 @@ grid.text(
   gp = gpar(fontsize = 10, fontface = "bold")
 )
 dev.off()
+
+
+
 ```
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+# exclude the same cell types used throughout the project
+excluded_celltypes <- c(
+  "Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+  "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+  "Plasma Cells"
+)
+meta_filtered <- Fu@meta.data %>%
+  filter(!General %in% excluded_celltypes)
+cat("Cell types remaining after exclusion:\n")
+print(sort(unique(meta_filtered$General)))
+
+# count how many diseases share each cell type
+tab <- table(meta_filtered$General, meta_filtered$orig.ident)
+n_diseases <- rowSums(tab > 0)
+celltype_disease_table <- data.frame(
+  General = rownames(tab),
+  n_diseases = n_diseases,
+  diseases = apply(tab > 0, 1, function(x) {
+    paste(colnames(tab)[x], collapse = ", ")
+  }),
+  row.names = NULL
+)
+
+# keep only shared cell types (present in >=2 diseases)
+shared_celltypes <- celltype_disease_table$General[
+  celltype_disease_table$n_diseases >= 2
+]
+shared_celltype_table <- celltype_disease_table[
+  celltype_disease_table$n_diseases >= 2,
+]
+write.csv(
+  shared_celltype_table,
+  file = "output/Fusion/shared_celltype.csv",
+  row.names = FALSE
+)
+cat("Shared cell types (>=2 diseases):\n")
+print(shared_celltypes)
+
+count_tbl_shared <- meta_filtered %>%
+  filter(General %in% shared_celltypes) %>%
+  dplyr::count(General, orig.ident) %>%
+  filter(n >= 2)
+
+count_mat_shared <- count_tbl_shared %>%
+  pivot_wider(
+    names_from = orig.ident,
+    values_from = n,
+    values_fill = 0
+  )
+count_mat_shared <- as.data.frame(count_mat_shared)
+rownames(count_mat_shared) <- count_mat_shared$General
+count_mat_shared$General <- NULL
+count_mat_shared <- as.matrix(count_mat_shared)
+
+# convert counts to a PERCENTAGE of cells per disease (denominator = the
+# full filtered cell count for that disease, not just the shared subset)
+total_per_disease <- meta_filtered %>%
+  dplyr::count(orig.ident) %>%
+  tibble::deframe()
+total_per_disease <- total_per_disease[colnames(count_mat_shared)]
+percent_mat_shared <- sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100
+percent_mat_shared <- round(percent_mat_shared, 1)
+
+mat <- percent_mat_shared
+n_rows <- nrow(mat)
+n_cols <- ncol(mat)
+
+# NOTE: pheatmap() is intentionally not used here. In your R session,
+
+color_fun <- colorRamp2(
+  c(0, max(mat) / 2, max(mat)),
+  c("grey", "red", "red3")
+)
+
+ht <- Heatmap(
+  mat,
+  name = "pct",
+  col = color_fun,
+  cluster_rows = FALSE,
+  cluster_columns = TRUE,
+  # cell numbers drawn directly - bold + black
+  cell_fun = function(j, i, x, y, w, h, fill) {
+    grid.text(
+      sprintf("%.1f", mat[i, j]),
+      x, y,
+      gp = gpar(fontsize = 11, fontface = "bold", col = "black")
+    )
+  },
+  row_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
+  column_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
+  column_names_rot = 45,
+  rect_gp = gpar(col = "white", lwd = 1),
+  border = TRUE,
+  # sized directly from the data (rows/cols x a fixed cell size) instead
+  # of guessing a canvas size - this is what actually removes the empty
+  # margin, rather than cropping it away after the fact
+  width = unit(n_cols * 14, "mm"),
+  height = unit(n_rows * 9, "mm"),
+  heatmap_legend_param = list(
+    title = "% of cells",
+    title_gp = gpar(fontsize = 11, fontface = "bold", col = "black"),
+    labels_gp = gpar(fontsize = 10, fontface = "bold", col = "black")
+  )
+)
+
+out_path <- "output/Fusion/HEATMAP_shared_celltype.pdf"
+dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+
+pdf(
+  out_path,
+  width = 3 + n_cols * 0.6,
+  height = 2 + n_rows * 0.4,
+  useDingbats = FALSE
+)
+draw(ht, padding = unit(c(2, 2, 2, 2), "mm"), legend_gap = unit(1, "mm"))
+dev.off()
+
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(grid)
+
+# exclude the same cell types used throughout the project
+excluded_celltypes <- c(
+  "Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+  "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+  "Plasma Cells"
+)
+meta_filtered <- Fu@meta.data %>%
+  filter(!General %in% excluded_celltypes)
+cat("Cell types remaining after exclusion:\n")
+print(sort(unique(meta_filtered$General)))
+
+# count how many diseases share each cell type
+tab <- table(meta_filtered$General, meta_filtered$orig.ident)
+n_diseases <- rowSums(tab > 0)
+celltype_disease_table <- data.frame(
+  General = rownames(tab),
+  n_diseases = n_diseases,
+  diseases = apply(tab > 0, 1, function(x) {
+    paste(colnames(tab)[x], collapse = ", ")
+  }),
+  row.names = NULL
+)
+
+# keep only shared cell types (present in >=2 diseases)
+shared_celltypes <- celltype_disease_table$General[
+  celltype_disease_table$n_diseases >= 2
+]
+shared_celltype_table <- celltype_disease_table[
+  celltype_disease_table$n_diseases >= 2,
+]
+write.csv(
+  shared_celltype_table,
+  file = "output/Fusion/shared_celltype.csv",
+  row.names = FALSE
+)
+cat("Shared cell types (>=2 diseases):\n")
+print(shared_celltypes)
+
+count_tbl_shared <- meta_filtered %>%
+  filter(General %in% shared_celltypes) %>%
+  dplyr::count(General, orig.ident) %>%
+  filter(n >= 2)
+
+count_mat_shared <- count_tbl_shared %>%
+  pivot_wider(
+    names_from = orig.ident,
+    values_from = n,
+    values_fill = 0
+  )
+count_mat_shared <- as.data.frame(count_mat_shared)
+rownames(count_mat_shared) <- count_mat_shared$General
+count_mat_shared$General <- NULL
+count_mat_shared <- as.matrix(count_mat_shared)
+
+# convert counts to a PERCENTAGE of cells per disease (denominator = the
+# full filtered cell count for that disease, not just the shared subset)
+total_per_disease <- meta_filtered %>%
+  dplyr::count(orig.ident) %>%
+  tibble::deframe()
+total_per_disease <- total_per_disease[colnames(count_mat_shared)]
+percent_mat_shared <- sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100
+percent_mat_shared <- round(percent_mat_shared, 1)
+
+# recursively walk the gtable and force every text grob to bold + black.
+# pheatmap has no fontface argument anywhere (row names, column names,
+# the numbers inside cells, or the legend), so this is the only way to
+# bold ALL of the plot's text without changing anything else about it.
+bold_black_recursive <- function(x) {
+  if (is.null(x)) {
+    return(x)
+  }
+  if (inherits(x, "text")) {
+    if (is.null(x$gp)) x$gp <- gpar()
+    x$gp$fontface <- "bold"
+    x$gp$col <- "black"
+    return(x)
+  }
+  if (inherits(x, "gtable")) {
+    x$grobs <- lapply(x$grobs, bold_black_recursive)
+    return(x)
+  }
+  if (inherits(x, "gTree")) {
+    if (!is.null(x$children) && length(x$children) > 0) {
+      x$children <- do.call(grid::gList, lapply(x$children, bold_black_recursive))
+    }
+    return(x)
+  }
+  x
+}
+
+# pheatmap has no built-in argument for a legend title, so the heatmap is
+# drawn once on a scratch device to get its gtable, then drawn again on
+# the real device with the title text added on top
+out_width <- 10
+out_height <- 12
+
+scratch_file <- tempfile(fileext = ".pdf")
+pdf(scratch_file, width = out_width, height = out_height)
+p <- pheatmap::pheatmap(
+  percent_mat_shared,
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  display_numbers = percent_mat_shared,
+  number_color = "black",
+  fontsize_row = 12,
+  fontsize_col = 12,
+  fontsize_number = 12,
+  color = colorRampPalette(c("grey", "red", "red3"))(100),
+  border_color = NA,
+  silent = TRUE
+)
+dev.off()
+unlink(scratch_file)
+
+gt <- p$gtable
+gt <- bold_black_recursive(gt) # bolds row names, column names, cell
+# numbers and the color-scale legend labels in one pass
+
+pdf("output/Fusion/HEATMAP.pdf", width = out_width, height = out_height)
+grid.newpage() # must start the page before any convertWidth/Height call below
+
+w <- convertWidth(gt$widths, "npc", valueOnly = TRUE)
+h <- convertHeight(gt$heights, "npc", valueOnly = TRUE)
+leg_row <- gt$layout[gt$layout$name == "legend", ]
+leg_x1 <- sum(w[seq_len(leg_row$r)])
+leg_y1 <- 1 - sum(h[seq_len(leg_row$t - 1)])
+
+grid.draw(gt)
+grid.text(
+  "% of cells",
+  x = unit(leg_x1, "npc"),
+  y = unit(leg_y1 + 0.015, "npc"),
+  just = c("right", "bottom"),
+  gp = gpar(fontsize = 10, fontface = "bold", col = "black")
+)
+dev.off()
+```
+
+
+
 
 ## 9. UMAP colored by general cell type
 
@@ -559,6 +819,76 @@ pheatmap(
   height = 10
 )
 ```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+
+cols <- c(
+  # CNS
+  "Oligodendrocytes" = "aquamarine3", "Astrocytes" = "#17BECF",
+  "Microglia" = "cadetblue", "OPC" = "grey", "Neurons" = "#4B2EFF",
+  # pancreas
+  "Acinar Cells" = "coral1", "Alpha Cells" = "mediumorchid1",
+  "Ductal Cells" = "mistyrose3", "Delta Cells" = "#762A83",
+  "Stellate Cells" = "yellow",
+  # skin
+  "Basal Keratinocyte" = "#9467bd", "Suprabasal Keratinocyte" = "brown2",
+  "Smooth Muscle Cells" = "lightpink2", "Schwann Cells" = "plum3",
+  "Melanocytes" = "orangered4", "Secretory Cells" = "salmon3",
+  # lung
+  "Basal Cells" = "indianred3", "Ciliated Cells" = "saddlebrown",
+  "Alveolar Cells" = "aquamarine", "Goblet Cells" = "cornflowerblue",
+  # endothelial
+  "Endothelial Cells" = "#E31A1C", "Lymphatic Endothelial" = "mediumorchid1",
+  "Arterial Endothelial" = "cadetblue3", "Venous Endothelial" = "chocolate1",
+  "Capillary Endothelial" = "#7f7f7f", "Peribronchial Endothelial" = "darkgoldenrod2",
+  # stromal
+  "Fibroblasts" = "cyan", "Mural Cells" = "#1F78B4",
+  # immune
+  "CD4" = "olivedrab2", "CD8" = "tomato", "B Cells" = "gold",
+  "NK Cells" = "magenta", "Mast Cells" = "#FDBF6F",
+  "Macrophages" = "orangered", "Mono/Mac" = "orangered",
+  "Monocytes" = "#2ca02c", "Dendritic Cells" = "yellow3",
+  "Myeloid Cells" = "#c5b0d5", "Plasmacytoid Dendritic" = "peru",
+  "Plasma Cells" = "darkorchid4", "Proliferating Cells" = "#B15928"
+)
+
+plot_df <- Fu@meta.data %>%
+  filter(!(orig.ident == "SjD" & Major_Celltype == "Immune Cells"))
+
+plot_df$orig.ident <- factor(plot_df$orig.ident,
+  levels = c("MS", "RA", "SS", "T1D", "SjD",
+             "IPF.U", "IPF.L", "SScILD.U", "SScILD.L"))
+
+setdiff(unique(plot_df$Major_Celltype), names(cols))
+
+counts_df <- plot_df %>%
+  dplyr::count(orig.ident, Major_Celltype, name = "n") %>%
+  mutate(celltype = Major_Celltype,
+         Major_Celltype = reorder_within(Major_Celltype, n, orig.ident))
+
+p <- ggplot(counts_df, aes(n, Major_Celltype, fill = celltype)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = scales::comma(n)), hjust = -0.1, size = 2) +
+  facet_wrap(~ orig.ident, scales = "free", ncol = 3) +
+  scale_y_reordered() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.3)),
+                     breaks = scales::pretty_breaks(n = 3)) +
+  scale_fill_manual(values = cols) +
+  labs(x = "Number of cells", y = NULL) +
+  theme_classic(base_size = 8) +
+  theme(legend.position = "none",
+        strip.background = element_blank(),
+        strip.text = element_text(face = "bold", size = 9),
+        panel.spacing = unit(0.6, "lines"))
+
+ggsave("output/Fusion/celltype_counts.pdf", p, width = 9, height = 6.5, dpi = 300)
+
+```
+
 ## 11. Shared pathways between diseases
 
 ```{r}
@@ -652,7 +982,11 @@ cat("\nBreakdown by n_diseases:\n")
 print(table(shared$n_diseases))
 cat("\nBreakdown by source:\n")
 print(table(shared$source))
+
 ```
+
+
+
 
 ```{r}
 library(ComplexHeatmap)
@@ -660,83 +994,101 @@ library(circlize)
 library(grid)
 library(dplyr)
 
-mat_full <- as.matrix(shared[, 4:12] + 0)
-rownames(mat_full) <- shared$term_name
+disease_cols <- c("MS", "RA", "SS", "T1D", "SjD", "IPF.U", "IPF.L", "SScILD.U", "SScILD.L")
 
-top_n <- 25
-n_diseases_per_pathway <- rowSums(mat_full)
-top_pathways <- names(sort(n_diseases_per_pathway, decreasing = TRUE))[1:top_n]
+shared <- shared %>%
+  mutate(
+    logpval = -log10(best_pval),
+    source_label = case_when(
+      grepl("^GO", term_id)   ~ "GO:BP",
+      grepl("^REAC", term_id) ~ "REAC",
+      TRUE ~ source
+    )
+  )
 
-mat <- mat_full[top_pathways, , drop = FALSE]
+top_n <- 20
+top_pathways <- shared %>%
+  arrange(desc(logpval)) %>%
+  slice_head(n = top_n) %>%
+  pull(term_name)
 
-mat_labels <- matrix(ifelse(mat == 1, "Present", "Absent"),
-  nrow = nrow(mat), dimnames = dimnames(mat)
-)
-col_map <- c("Absent" = "white", "Present" = "darkblue")
+sub <- shared %>% filter(term_name %in% top_pathways)
 
-source_cols <- c("GO:BP" = "#1B9E77", "REAC" = "#D95F02")
-row_ha <- rowAnnotation(
-  Source = shared$source[match(top_pathways, shared$term_name)],
-  col = list(Source = source_cols),
-  show_annotation_name = FALSE
+presence_mat <- as.matrix(sub[, disease_cols])
+rownames(presence_mat) <- sub$term_name
+
+logpval_vec <- sub$logpval
+names(logpval_vec) <- sub$term_name
+
+mat <- presence_mat
+mode(mat) <- "numeric"
+for (pw in rownames(mat)) {
+  mat[pw, ] <- ifelse(presence_mat[pw, ], logpval_vec[pw], NA)
+}
+mat <- mat[top_pathways, , drop = FALSE]
+
+wrap_label <- function(x, width = 34) paste(strwrap(x, width = width), collapse = "\n")
+row_labels_wrapped <- sapply(seq_len(nrow(sub)), function(i) {
+  paste0("[", sub$source_label[i], "] ", wrap_label(sub$term_name[i]))
+})
+names(row_labels_wrapped) <- sub$term_name
+row_labels_wrapped <- row_labels_wrapped[top_pathways]
+
+col_fun <- colorRamp2(
+  c(0, max(logpval_vec, na.rm = TRUE)),
+  c("white", "#08306B")
 )
 
 n_rows <- nrow(mat)
 n_cols <- ncol(mat)
 
+n_lines_per_label <- sapply(row_labels_wrapped, function(x) length(strsplit(x, "\n")[[1]]))
+max_lines <- max(n_lines_per_label)
+mm_per_line <- 4.2
+row_height_mm <- max(8, max_lines * mm_per_line)
+
 ht <- Heatmap(
-  mat_labels,
-  name = "Presence",
-  col = col_map,
-  cluster_rows = TRUE,
+  mat,
+  name = "-log10(best p-value)",
+  col = col_fun,
+  na_col = "grey90",
+  cluster_rows = FALSE,
   cluster_columns = FALSE,
-  show_row_dend = TRUE,
-  row_dend_side = "left",
-  row_dend_width = unit(30, "mm"),
-  width = unit(n_cols * 15, "mm"), # fixed so the heatmap doesn't stretch to fill the page
-  height = unit(n_rows * 10, "mm"),
+  width = unit(n_cols * 10, "mm"),
+  height = unit(n_rows * row_height_mm, "mm"),
+  row_labels = row_labels_wrapped,
   row_names_side = "right",
-  row_names_gp = gpar(fontsize = 14),
-  column_names_gp = gpar(fontsize = 12),
-  column_names_rot = 45,
-  row_names_max_width = max_text_width(rownames(mat), gp = gpar(fontsize = 14)) + unit(4, "mm"),
-  left_annotation = row_ha,
-  heatmap_legend_param = list(title = "Presence"),
+  row_names_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
+  column_names_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
+  column_names_rot = 90,
+  row_names_max_width = max_text_width(row_labels_wrapped,
+                          gp = gpar(fontsize = 10, fontface = "bold")) + unit(4, "mm"),
+  rect_gp = gpar(col = "grey70", lwd = 0.6),
+  heatmap_legend_param = list(
+    title = "-log10(P)",
+    title_gp = gpar(fontsize = 11, fontface = "bold", col = "black"),
+    labels_gp = gpar(fontsize = 12, fontface = "bold", col = "black")
+  ),
   border = TRUE
 )
 
-# page sized to match the fixed component sizes above
-pdf("CCC/Fusion/output/heatmap_shared_pathways.pdf",
-  width = 5 + n_cols * 0.6,
-  height = 3 + n_rows * 0.42
-)
-draw(ht, padding = unit(c(2, 2, 2, 10), "mm")) # bottom, left, top, right
+pdf("CCC/Fusion/output/Heatmap_pathways.pdf",
+    width  = 4 + n_cols * 0.4,
+    height = 2 + n_rows * (row_height_mm / 25.4),
+    useDingbats = FALSE)
+draw(ht, padding = unit(c(2, 2, 2, 6), "mm"), legend_gap = unit(1, "mm"))
 dev.off()
+
 ```
 
+
+
 ```{r}
-# presence/absence heatmap of all shared pathways
-library(pheatmap)
-
-mat <- as.matrix(shared[, 4:12] + 0)
-rownames(mat) <- shared$term_name
-
-pheatmap(mat,
-  color         = c("white", "darkblue"),
-  cluster_rows  = TRUE,
-  cluster_cols  = FALSE,
-  fontsize_row  = 8,
-  fontsize_col  = 10,
-  legend_breaks = c(0, 1),
-  legend_labels = c("Absent", "Present"),
-  filename      = "CCC/Fusion/output/heatmap_shared_pathways.pdf",
-  width         = 14,
-  height        = 14
-)
+#Upset plot
 
 # upset plot of shared pathways
 library(UpSetR)
-
+library(grid)
 upset_list <- list(
   MS       = MS.sig$term_id,
   RA       = RA.sig$term_id,
@@ -749,7 +1101,7 @@ upset_list <- list(
   SScILD.L = SScILD.L.sig$term_id
 )
 
-pdf("CCC/Fusion/output/upset_shared_pathways.pdf",
+pdf("CCC/Fusion/output/upset_.pdf",
   width = 16,
   height = 12,
   onefile = FALSE
@@ -761,18 +1113,44 @@ suppressWarnings(
     order.by = "freq",
     decreasing = TRUE,
     mb.ratio = c(0.6, 0.4),
-    text.scale = c(1.5, 1.5, 1.2, 1.2, 1.5, 1.2),
-    point.size = 4,
-    line.size = 1,
+    text.scale = c(3, 2.5, 2.5, 2, 3.5, 2.2),
+    point.size = 6,
+    line.size = 1.5,
     mainbar.y.label = "Number of Shared Pathways",
     sets.x.label = "Pathways per Disease",
     main.bar.color = "#2166AC",
-    sets.bar.color = "#D6604D"
+    sets.bar.color = "#D6604D",
+    matrix.color = "#2166AC",
+    shade.color = "grey85",
+    shade.alpha = 0.4
   )
 )
 
+# UpSetR has no fontface/bold argument anywhere in its API, so this finds
+# every text grob actually drawn on the device (via grid.ls) and bolds it
+# in place, AFTER the plot is drawn. None of the colors above are touched.
+bold_all_text_on_device <- function() {
+  gl <- grid.ls(print = FALSE, recursive = TRUE, grobs = TRUE, viewports = FALSE)
+  text_names <- unique(gl$name[gl$type == "text"])
+
+  n_ok <- 0
+  for (nm in text_names) {
+    ok <- tryCatch({
+      grid.edit(nm, gp = gpar(fontface = "bold"))
+      TRUE
+    }, error = function(e) FALSE)
+    if (ok) n_ok <- n_ok + 1
+  }
+  cat("Bolded", n_ok, "of", length(text_names), "text grobs found on the device\n")
+}
+bold_all_text_on_device()
+
 dev.off()
+
+
 ```
+
+
 
 ## 12. Shared interactions between diseases
 
@@ -991,10 +1369,14 @@ long_int$n_diseases[is_duplicate] <- ""
 dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
 write.csv(long_int, "CCC/Fusion/output/shared_interactions_between_disease.csv", row.names = FALSE)
 long_int <- read.csv("CCC/Fusion/output/shared_interactions_between_disease.csv")
+
 ```
 
+
+
+
 ```{r}
-# plot: top 40 shared LR pairs present in 8-9 diseases
+
 library(dplyr)
 library(tidyr)
 library(ggplot2)
@@ -1016,8 +1398,7 @@ celltype_cols <- c(
   "Epithelial Cells"    = "mediumpurple2"
 )
 
-# keep interactions present in 8-9 diseases, capped to the top N by strength
-top_n <- 40
+top_n <- 15
 n_per_group <- ceiling(top_n / 2)
 
 shared_all_8_9 <- shared_int %>%
@@ -1080,160 +1461,19 @@ shared_size_scale <- scale_size(
   labels = as.character(magnitude_labels)
 )
 
-# senders dotplot - the only plot showing the Cell type color legend
-p_snd <- ggplot(lr_disease_snd, aes(
-  x = disease, y = lr,
-  size = score, color = celltype
-)) +
-  geom_point() +
-  scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
-  shared_size_scale +
-  guides(
-    size  = guide_legend(order = 1),
-    color = guide_legend(order = 2)
-  ) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
-    axis.text.y = element_text(size = 11, face = "bold", color = "black"),
-    axis.title = element_text(size = 12, face = "bold")
-  ) +
-  labs(
-    x = "Disease", y = "Ligand-Receptor pair",
-    color = "Cell type",
-    title = "Senders"
-  )
-
-# receivers dotplot - color legend suppressed, LR labels moved to the right
-p_rcv <- ggplot(lr_disease_rcv, aes(
-  x = disease, y = lr,
-  size = score, color = celltype
-)) +
-  geom_point() +
-  scale_color_manual(
-    values = celltype_cols, limits = names(celltype_cols),
-    drop = FALSE, guide = "none"
-  ) +
-  scale_y_discrete(position = "right") +
-  shared_size_scale +
-  guides(size = guide_legend(order = 1)) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
-    axis.text.y = element_text(size = 11, face = "bold", color = "black"),
-    axis.title = element_text(size = 12, face = "bold")
-  ) +
-  labs(
-    x = "Disease", y = "Ligand-Receptor pair",
-    color = "Cell type",
-    title = "Receivers"
-  )
-
-final_plot <- (p_snd | p_rcv) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "right")
-
-dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
-
-plot_height <- max(10, length(top_lr) * 0.22)
-cat("Number of LR pairs:", length(top_lr), "| plot height:", plot_height, "inches\n")
-
-ggsave("CCC/Fusion/output/shared_interactions_8_9_diseases.pdf",
-  final_plot,
-  width = 18, height = plot_height, limitsize = FALSE
-)
-
-cat("Saved: CCC/Fusion/output/shared_interactions_8_9_diseases.pdf and .png\n")
-```
-
-```{r}
-# same plot, re-run with a smaller top_n and a Cell type legend built from a
-# separate invisible dummy layer (more robust rendering of the legend keys)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(patchwork)
-disease_levels <- c("MS", "RA", "SS", "T1D", "SjD", "IPF.U", "IPF.L", "SScILD.U", "SScILD.L")
-
-celltype_cols <- c(
-  "B Cells"             = "gold",
-  "CD4"                 = "olivedrab2",
-  "CD8"                 = "tomato",
-  "NK Cells"            = "magenta",
-  "Mono/Mac"            = "darkblue",
-  "Mast Cells"          = "#FDBF6F",
-  "Proliferating Cells" = "#B15928",
-  "Endothelial Cells"   = "#E31A1C",
-  "Fibroblasts"         = "cyan",
-  "Mural Cells"         = "#1F78B4",
-  "Epithelial Cells"    = "mediumpurple2"
-)
-
-top_n <- 15
-n_per_group <- ceiling(top_n / 2)
-shared_all_8_9 <- shared_int %>%
-  filter(n_diseases %in% c(8, 9)) %>%
-  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
-  distinct(lr, .keep_all = TRUE) %>%
-  arrange(best_magnitude)
-cat("Total DISTINCT interactions present in 8-9 diseases:", nrow(shared_all_8_9), "\n")
-print(table(shared_all_8_9$n_diseases))
-top_9 <- shared_all_8_9 %>%
-  filter(n_diseases == 9) %>%
-  slice_head(n = n_per_group)
-top_8 <- shared_all_8_9 %>%
-  filter(n_diseases == 8) %>%
-  slice_head(n = n_per_group)
-shared_8_9 <- bind_rows(top_9, top_8) %>% arrange(desc(n_diseases), best_magnitude)
-cat(
-  "Keeping", nrow(top_9), "pairs present in all 9 diseases,",
-  nrow(top_8), "pairs present in 8 diseases (", nrow(shared_8_9), "total)\n"
-)
-top_lr <- shared_8_9$lr
-stopifnot(!any(duplicated(top_lr)))
-
-lr_disease <- all_data %>%
-  mutate(lr = paste(ligand.complex, receptor.complex, sep = "^")) %>%
-  filter(lr %in% top_lr) %>%
-  group_by(lr, ligand.complex, receptor.complex, disease) %>%
-  slice_min(order_by = magnitude_rank, n = 1, with_ties = FALSE) %>%
-  ungroup() %>%
-  mutate(
-    lr      = factor(lr, levels = rev(top_lr)),
-    disease = factor(disease, levels = disease_levels),
-    score   = -log10(pmax(magnitude_rank, 1e-300))
-  )
-cat(
-  "Rows in lr_disease (should be up to", length(top_lr), "LR pairs x 8-9 diseases each):",
-  nrow(lr_disease), "\n"
-)
-stopifnot(!any(duplicated(paste(lr_disease$lr, lr_disease$disease))))
-
-lr_disease_snd <- lr_disease %>% mutate(celltype = source)
-lr_disease_rcv <- lr_disease %>% mutate(celltype = target)
-
-score_range <- range(lr_disease$score, na.rm = TRUE)
-score_breaks <- seq(score_range[1], score_range[2], length.out = 5)
-magnitude_labels <- signif(10^(-score_breaks), 2)
-shared_size_scale <- scale_size(
-  name   = "magnitude_rank\n(smaller = stronger)",
-  range  = c(1, 6),
-  limits = score_range,
-  breaks = score_breaks,
-  labels = as.character(magnitude_labels)
-)
-
-# senders dotplot - Cell type legend driven by a dummy invisible layer
-# (alpha = 0), decoupled from the "score" size aesthetic
 dummy_celltype <- data.frame(
   celltype = factor(names(celltype_cols), levels = names(celltype_cols)),
   disease  = lr_disease_snd$disease[1],
   lr       = lr_disease_snd$lr[1]
 )
+
 p_snd <- ggplot(lr_disease_snd, aes(x = disease, y = lr)) +
-  geom_point(aes(size = score, color = celltype), show.legend = c(size = TRUE, colour = FALSE)) +
+  geom_point(aes(size = score, color = celltype),
+    show.legend = c(size = TRUE, colour = FALSE)
+  ) +
   geom_point(
-    data = dummy_celltype, aes(x = disease, y = lr, color = celltype),
+    data = dummy_celltype,
+    aes(x = disease, y = lr, color = celltype),
     size = 5, alpha = 0, inherit.aes = FALSE
   ) +
   scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
@@ -1244,9 +1484,10 @@ p_snd <- ggplot(lr_disease_snd, aes(x = disease, y = lr)) +
   ) +
   theme_bw() +
   theme(
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
-    axis.text.y = element_text(size = 11, face = "bold", color = "black"),
-    axis.title = element_text(size = 12, face = "bold")
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 16, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 18, face = "bold", color = "black"),
+    axis.title  = element_text(size = 14, face = "bold", color = "black"),
+    plot.title  = element_text(size = 16, face = "bold", color = "black")
   ) +
   labs(
     x = "Disease", y = "Ligand-Receptor pair",
@@ -1268,9 +1509,10 @@ p_rcv <- ggplot(lr_disease_rcv, aes(
   guides(size = guide_legend(order = 1)) +
   theme_bw() +
   theme(
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 11, face = "bold"),
-    axis.text.y = element_text(size = 11, face = "bold", color = "black"),
-    axis.title = element_text(size = 12, face = "bold")
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 16, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    axis.title  = element_text(size = 14, face = "bold", color = "black"),
+    plot.title  = element_text(size = 16, face = "bold", color = "black")
   ) +
   labs(
     x = "Disease", y = "Ligand-Receptor pair",
@@ -1280,51 +1522,86 @@ p_rcv <- ggplot(lr_disease_rcv, aes(
 
 final_plot <- (p_snd | p_rcv) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "right")
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 14, face = "bold", color = "black"),
+    legend.text  = element_text(size = 13, face = "bold", color = "black")
+  )
+
 dir.create("CCC/Fusion/output", recursive = TRUE, showWarnings = FALSE)
+
 plot_height <- max(10, length(top_lr) * 0.22)
 cat("Number of LR pairs:", length(top_lr), "| plot height:", plot_height, "inches\n")
-ggsave("CCC/Fusion/output/shared_interactions_8_9_diseases.pdf",
+
+ggsave("CCC/Fusion/output/shared_interactions_diseases.pdf",
   final_plot,
   width = 18, height = plot_height, limitsize = FALSE
 )
+
 ```
+
 
 ## 13. Upset plot of shared interactions
 
 ```{r}
-library(UpSetR)
 
-# one set of unique interactions per disease
+library(UpSetR)
+library(grid)
+
 interaction_list <- lapply(split(all_data$interaction, all_data$disease), unique)
 
 cat("Interactions per disease:\n")
 print(sapply(interaction_list, length))
 
+bold_all_text_on_device <- function() {
+  gl <- grid.ls(print = FALSE, recursive = TRUE, grobs = TRUE, viewports = FALSE)
+  text_names <- unique(gl$name[gl$type == "text"])
+  n_ok <- 0
+  for (nm in text_names) {
+    ok <- tryCatch({
+      grid.edit(nm, gp = gpar(fontface = "bold"))
+      TRUE
+    }, error = function(e) FALSE)
+    if (ok) n_ok <- n_ok + 1
+  }
+  cat("Bolded", n_ok, "of", length(text_names), "text grobs\n")
+}
+
 pdf("CCC/Fusion/output/upset_plot_shared_interactions.pdf",
-  width = 20, height = 13,
-  onefile = FALSE
+    width = 16, height = 12, onefile = FALSE)
+
+suppressWarnings(
+  upset(fromList(interaction_list),
+    nsets        = length(interaction_list),
+    order.by     = "freq",
+    decreasing   = TRUE,
+    mb.ratio     = c(0.6, 0.4),
+    text.scale   = c(3, 2.5, 2.5, 2, 3.5, 2.2),
+    point.size   = 6,
+    line.size    = 1.5,
+    mainbar.y.label = "Number of Shared Interactions",
+    sets.x.label    = "Interactions per Disease",
+    main.bar.color  = "#2166AC",
+    sets.bar.color  = "#D6604D",
+    matrix.color    = "#2166AC",
+    shade.color     = "grey85",
+    shade.alpha     = 0.4
+  )
 )
 
-upset(
-  fromList(interaction_list),
-  nsets = length(interaction_list),
-  nintersects = 30,
-  order.by = "freq",
-  mb.ratio = c(0.5, 0.5),
-  text.scale = c(1.8, 1.4, 1.4, 1.2, 1.5, 1.3),
-  point.size = 3.5,
-  line.size = 1.2,
-  main.bar.color = "#993404",
-  sets.bar.color = "#2c7fb8",
-  matrix.color = "black",
-  shade.color = "grey85",
-  set_size.show = TRUE,
-  set_size.scale_max = max(sapply(interaction_list, length)) * 1.15
-)
-
+bold_all_text_on_device()
 dev.off()
+ 
 ```
+
+
+
+
+
+
+
+
+
 
 ## 14. GRN - shared and unique regulons between diseases
 
@@ -1495,10 +1772,12 @@ write.csv(final_table_shared, "output/Fusion/shared_regulons_dominant_celltype.c
 write.csv(final_table_unique, "output/Fusion/unique_regulons_dominant_celltype.csv", row.names = FALSE)
 final_table_unique <- read.csv("output/Fusion/unique_regulons_dominant_celltype.csv")
 final_table_shared <- read.csv("output/Fusion/shared_regulons_dominant_celltype.csv")
+
 ```
 
+
 ```{r}
-# plot: top 40 shared regulons, dominant cell type + RSS score per disease
+# plot: top 40 shared regulons, cell type + RSS score per disease
 library(dplyr)
 library(tidyr)
 library(ComplexHeatmap)
@@ -1575,7 +1854,10 @@ cluster_mat[is.na(cluster_mat)] <- 0
 
 present_celltypes <- intersect(names(celltype_cols), unique(na.omit(as.vector(dom_ct_mat))))
 
-# bubble = solid color sized by RSS; a grey "x" marks a TF absent in that disease
+# bubble = solid color sized by RSS; a grey "x" marks a TF absent in that
+# disease - the "x" stays grey on purpose (it's the same "not present"
+# marker color used in the absent-legend below), only the LABEL text
+# (row/column names, legend titles/labels) is switched to black + bold
 cell_fun <- function(j, i, x, y, w, h, fill) {
   ct <- dom_ct_mat[i, j]
   if (is.na(ct)) {
@@ -1601,9 +1883,17 @@ ht <- Heatmap(
   rect_gp = gpar(type = "none"),
   cell_fun = cell_fun,
   show_heatmap_legend = FALSE,
-  row_names_gp = gpar(fontsize = 9, fontface = "bold"),
-  column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+  row_names_gp = gpar(fontsize = 9, fontface = "bold", col = "black"),
+  column_names_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
   column_names_rot = 90,
+  # reserves enough room below the heatmap for the full, rotated disease
+  # names (column_names_rot = 90 makes them run vertically downward) -
+  # without this, ComplexHeatmap can size that area too tight for the
+  # longest name (e.g. "SScILD.U"), and it gets clipped at the page edge
+  column_names_max_height = max_text_width(
+    colnames(cluster_mat),
+    gp = gpar(fontsize = 10, fontface = "bold")
+  ) + unit(4, "mm"),
   border = TRUE,
   cluster_rows = TRUE,
   cluster_columns = TRUE,
@@ -1623,9 +1913,9 @@ ht <- Heatmap(
 lgd_celltype <- Legend(
   labels = present_celltypes,
   legend_gp = gpar(fill = celltype_cols[present_celltypes]),
-  title = "Dominant cell type",
-  title_gp = gpar(fontsize = 10, fontface = "bold"),
-  labels_gp = gpar(fontsize = 9)
+  title = "cell type",
+  title_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
+  labels_gp = gpar(fontsize = 9, fontface = "bold", col = "black")
 )
 
 size_breaks <- c(0.2, 0.4, 0.6, 0.8, 1.0)
@@ -1636,8 +1926,8 @@ lgd_size <- Legend(
   pch = 16,
   size = unit(size_breaks * 0.42 * 4, "mm"),
   legend_gp = gpar(col = "grey40", fill = "grey70"),
-  title_gp = gpar(fontsize = 10, fontface = "bold"),
-  labels_gp = gpar(fontsize = 9)
+  title_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
+  labels_gp = gpar(fontsize = 9, fontface = "bold", col = "black")
 )
 
 lgd_absent <- Legend(
@@ -1646,7 +1936,7 @@ lgd_absent <- Legend(
   pch = 4,
   legend_gp = gpar(col = "grey60", fontsize = 9),
   title = "",
-  labels_gp = gpar(fontsize = 9)
+  labels_gp = gpar(fontsize = 9, fontface = "bold", col = "black")
 )
 
 draw(ht,
@@ -1655,15 +1945,23 @@ draw(ht,
 )
 
 plot_w <- 9
-plot_h <- max(8, top_n * 0.22)
+# a bit of extra height reserved specifically for the rotated column
+# (disease) names at the bottom, which were getting cut off at the page
+# edge before
+plot_h <- max(8, top_n * 0.22) + 1.2
 
 pdf("output/Fusion/shared_regulons_top40.pdf", width = plot_w, height = plot_h)
 draw(ht,
   annotation_legend_list = list(lgd_celltype, lgd_size, lgd_absent),
-  heatmap_legend_side = "right", annotation_legend_side = "right"
+  heatmap_legend_side = "right", annotation_legend_side = "right",
+  # extra bottom padding (first value) to give the vertical disease-name
+  # text room to breathe before the page edge
+  padding = unit(c(8, 2, 2, 2), "mm")
 )
 dev.off()
+
 ```
+
 
 ## 15. Shared regulons vs TLS target genes
 
@@ -1839,7 +2137,9 @@ cat("\nPreview of final table:\n")
 print(head(tf_tls_full_table, 20))
 
 write.csv(tf_tls_full_table, "GRN_SCENIC/TF_TLS_targets_by_category_celltype.csv", row.names = FALSE)
+
 ```
+
 
 ```{r}
 # heatmap: number of TLS targets per shared TF, per disease
@@ -1853,7 +2153,7 @@ tf_disease_tls_counts <- tf_gene_overlap %>%
   dplyr::distinct(TF, target, disease) %>%
   dplyr::count(TF, disease, name = "n_tls_targets_in_disease")
 
-top_n_tf <- 30
+top_n_tf <- 40
 top_tfs <- tf_tls_target_counts %>%
   dplyr::arrange(dplyr::desc(n_tls_targets)) %>%
   dplyr::slice_head(n = top_n_tf) %>%
@@ -1898,75 +2198,18 @@ ht <- Heatmap(
   row_names_side = "right",
   row_names_gp = gpar(fontsize = 10),
   column_names_gp = gpar(fontsize = 11),
-  column_names_rot = 45,
+  column_names_rot = 90,
   border = TRUE
 )
 
 pdf("GRN_SCENIC/TF_TLS_count_heatmap.pdf", width = 10, height = 12)
 draw(ht)
 dev.off()
+
 ```
 
+
 ```{r}
-# same TLS-overlap analysis re-run, with a fix so the disease codes match
-# between celltype_long ("IPF.Upper" etc.) and regulon_long ("IPF.U" etc.)
-# before the per-(TF, disease) join used in the plot below
-library(dplyr)
-library(purrr)
-library(tidyr)
-
-parse_target_genes <- function(x) {
-  if (is.na(x) || x == "") {
-    return(character(0))
-  }
-  m <- gregexpr("(?<=\\(')[^']+(?=')", x, perl = TRUE)
-  regmatches(x, m)[[1]]
-}
-
-load_disease_regulons <- function(folder_parts, label) {
-  path <- file.path(
-    "GRN_SCENIC", do.call(file.path, as.list(folder_parts)),
-    "output", "regulons.csv"
-  )
-  df <- read.csv(path, skip = 1, header = TRUE)
-  names(df)[1:2] <- c("TF", "MotifID")
-  df %>%
-    dplyr::filter(TargetGenes != "") %>%
-    dplyr::transmute(TF, target = purrr::map(TargetGenes, parse_target_genes)) %>%
-    tidyr::unnest(target) %>%
-    dplyr::distinct(TF, target) %>%
-    dplyr::mutate(disease = label)
-}
-
-disease_paths <- list(
-  MS       = "MS",
-  RA       = "RA",
-  SS       = "SS",
-  T1D      = "T1D",
-  SjD      = "SjD",
-  IPF.U    = c("IPF", "Upper"),
-  IPF.L    = c("IPF", "Low"),
-  SScILD.U = c("SScILD", "Upper"),
-  SScILD.L = c("SScILD", "Low")
-)
-
-regulon_list <- list()
-for (label in names(disease_paths)) {
-  cat("loading:", label, "... ")
-  result <- tryCatch(load_disease_regulons(disease_paths[[label]], label),
-    error = function(e) e
-  )
-  if (inherits(result, "error")) {
-    cat("FAILED -", conditionMessage(result), "\n")
-  } else {
-    cat("ok,", nrow(result), "rows\n")
-    regulon_list[[label]] <- result
-  }
-}
-regulon_long <- dplyr::bind_rows(regulon_list)
-cat("\ntotal rows:", nrow(regulon_long), "\n")
-cat("diseases loaded:", paste(unique(regulon_long$disease), collapse = ", "), "\n")
-
 library(dplyr)
 library(tidyr)
 library(purrr)
@@ -1982,12 +2225,12 @@ tf_disease_counts <- regulon_long %>%
 core_tfs <- tf_disease_counts %>%
   dplyr::filter(n_diseases >= core_threshold) %>%
   dplyr::pull(TF)
-cat("core_tfs (>=", core_threshold, "diseases, from regulon_long):", length(core_tfs), "TFs\n")
 
 disease_cols <- c(
   "IPF.Low", "IPF.Upper", "MS", "RA", "SS",
   "SScILD.Low", "SScILD.Upper", "SjD", "T1D"
 )
+
 celltype_long <- final_table_shared %>%
   tidyr::pivot_longer(
     cols = dplyr::all_of(disease_cols),
@@ -1999,15 +2242,11 @@ celltype_long <- final_table_shared %>%
     RSS      = as.numeric(stringr::str_extract(cell_rss, "[0-9.]+$"))
   ) %>%
   dplyr::select(TF, disease, CellType, RSS) %>%
-  # FIX (must stay - this is the pulmonary-diseases-missing bug):
-  # relabel to the short disease codes used everywhere else (regulon_long,
-  # tf_gene_overlap). Without this, the left_join below silently fails for
-  # IPF.U/IPF.L/SScILD.U/SScILD.L, producing NA values ggplot then drops.
   dplyr::mutate(disease = dplyr::case_when(
-    disease == "IPF.Upper" ~ "IPF.U",
-    disease == "IPF.Low" ~ "IPF.L",
+    disease == "IPF.Upper"    ~ "IPF.U",
+    disease == "IPF.Low"      ~ "IPF.L",
     disease == "SScILD.Upper" ~ "SScILD.U",
-    disease == "SScILD.Low" ~ "SScILD.L",
+    disease == "SScILD.Low"   ~ "SScILD.L",
     TRUE ~ disease
   ))
 
@@ -2016,31 +2255,12 @@ dominant_celltype_per_TF <- celltype_long %>%
   dplyr::slice_max(order_by = RSS, n = 1, with_ties = FALSE) %>%
   dplyr::ungroup() %>%
   dplyr::select(TF, dominant_celltype = CellType, dominant_RSS = RSS)
-cat("dominant cell type recovered for", nrow(dominant_celltype_per_TF), "TFs\n")
 
-stopifnot("regulon_long not found - run the loader first" = exists("regulon_long"))
-
-germinal_center <- c(
-  "AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC",
-  "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5"
-)
-inflammation <- c(
-  "TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17",
-  "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5",
-  "ICAM1", "VCAM1", "SELE"
-)
-lymphoid_chemokines <- c(
-  "CXCL13", "CCL21", "CCL19", "CXCL12",
-  "CXCR5", "CCR7", "CXCR4"
-)
-hev <- c(
-  "NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2",
-  "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C"
-)
-fdc <- c(
-  "CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP",
-  "CXCL13", "CD54", "ICAM1", "FCER2"
-)
+germinal_center     <- c("AID", "BCL6", "PAX5", "CD40LG", "AICDA", "MYC", "IRF8", "S1PR2", "ICOS", "CXCR4", "CXCR5")
+inflammation        <- c("TNF", "IL1B", "IL6", "IL7", "IL8", "IL12", "IL17", "IFNG", "TGFB", "CCL2", "CCL3", "CCL4", "CCL5", "ICAM1", "VCAM1", "SELE")
+lymphoid_chemokines <- c("CXCL13", "CCL21", "CCL19", "CXCL12", "CXCR5", "CCR7", "CXCR4")
+hev                 <- c("NTAN1", "MADCAM1", "CHST4", "GLYCAM1", "FUT7", "CHST2", "MEOX2", "TSPAN7", "ANKRD43", "ZNF280C")
+fdc                 <- c("CD21", "CD23", "CR1", "CR2", "CD35", "FDCSP", "CXCL13", "CD54", "ICAM1", "FCER2")
 
 marker_groups <- list(
   germinal_center     = germinal_center,
@@ -2050,44 +2270,30 @@ marker_groups <- list(
   fdc                 = fdc
 )
 
-tls_genes_long <- purrr::imap_dfr(
-  marker_groups,
-  ~ data.frame(category = .y, gene = .x)
-)
+tls_genes_long <- purrr::imap_dfr(marker_groups, ~ data.frame(category = .y, gene = .x))
 
-regulon_core <- regulon_long %>%
-  dplyr::filter(TF %in% core_tfs)
+regulon_core <- regulon_long %>% dplyr::filter(TF %in% core_tfs)
 
 tf_gene_overlap <- regulon_core %>%
-  dplyr::inner_join(tls_genes_long,
-    by = c("target" = "gene"),
-    relationship = "many-to-many"
-  ) %>%
+  dplyr::inner_join(tls_genes_long, by = c("target" = "gene"), relationship = "many-to-many") %>%
   dplyr::distinct(TF, category, target, disease) %>%
   dplyr::arrange(category, TF, target) %>%
   dplyr::left_join(dominant_celltype_per_TF, by = "TF")
-
-cat("Rows per disease (sanity check - should be non-zero for all 9):\n")
-print(tf_gene_overlap %>% dplyr::count(disease))
 
 tf_tls_target_counts <- tf_gene_overlap %>%
   dplyr::distinct(TF, target) %>%
   dplyr::count(TF, name = "n_tls_targets")
 
-# top 10 TFs by number of distinct TLS targets
 top_n_tf <- 10
 top10_tfs <- tf_tls_target_counts %>%
   dplyr::arrange(dplyr::desc(n_tls_targets)) %>%
   dplyr::slice_head(n = top_n_tf) %>%
   dplyr::pull(TF)
-cat("\nTop", top_n_tf, "TFs by number of TLS targets:\n")
-print(top10_tfs)
 
 top10_tls_overlap <- tf_gene_overlap %>%
   dplyr::filter(TF %in% top10_tfs) %>%
   dplyr::arrange(category, TF, target)
 
-# top 5 genes per category, by how many of these 10 TFs regulate each gene
 top_n_gene <- 5
 gene_tf_counts <- top10_tls_overlap %>%
   dplyr::distinct(TF, category, target) %>%
@@ -2097,8 +2303,6 @@ top5_genes_per_category <- gene_tf_counts %>%
   dplyr::group_by(category) %>%
   dplyr::slice_max(order_by = n_tfs_targeting, n = top_n_gene, with_ties = FALSE) %>%
   dplyr::ungroup()
-cat("\nTop", top_n_gene, "genes per category:\n")
-print(top5_genes_per_category)
 
 plot_data <- top10_tls_overlap %>%
   dplyr::inner_join(top5_genes_per_category %>% dplyr::select(category, target),
@@ -2110,15 +2314,8 @@ plot_data <- top10_tls_overlap %>%
   ) %>%
   dplyr::rename(RSS_in_disease = RSS, CellType_in_disease = CellType)
 
-cat("\nRows per disease in plot_data (should be non-zero for all 9, including pulmonary ones):\n")
-print(plot_data %>% dplyr::count(disease))
-
-plot_data$TF <- factor(plot_data$TF, levels = top10_tfs)
-
-disease_levels <- c(
-  "MS", "RA", "SS", "T1D", "SjD",
-  "IPF.U", "IPF.L", "SScILD.U", "SScILD.L"
-)
+disease_levels <- c("MS", "RA", "SS", "T1D", "SjD", "IPF.U", "IPF.L", "SScILD.U", "SScILD.L")
+plot_data$TF      <- factor(plot_data$TF, levels = top10_tfs)
 plot_data$disease <- factor(plot_data$disease, levels = disease_levels)
 plot_data$RSS_in_disease <- pmin(pmax(plot_data$RSS_in_disease, 0), 1)
 
@@ -2157,28 +2354,34 @@ p_final <- ggplot(plot_data, aes(x = TF, y = target)) +
   scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
   scale_size_continuous(
     name   = "RSS",
-    range  = c(1.5, 6),
+    range  = c(2, 9),
     breaks = c(0.2, 0.4, 0.6, 0.8, 1.0),
     limits = c(0, 1)
   ) +
   guides(
     size  = guide_legend(order = 1),
-    color = guide_legend(order = 2, override.aes = list(alpha = 1, size = 5))
+    color = guide_legend(order = 2, override.aes = list(alpha = 1, size = 6))
   ) +
   labs(x = "Transcription Factor", y = "Target Gene", color = "Cell type") +
-  theme_bw(base_size = 9) +
+  theme_bw(base_size = 22) +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 14, color = "black"),
-    axis.text.y = element_text(size = 14, color = "black"),
-    panel.grid.minor = element_blank(),
-    strip.placement = "outside",
-    strip.text.x = element_text(size = 14, face = "bold"),
-    strip.text.y.left = element_text(angle = 0, size = 14, face = "bold")
+    axis.text.x   = element_text(angle = 45, hjust = 1, vjust = 1, size = 15, face = "bold", color = "black"),
+    axis.text.y   = element_text(size = 20, face = "bold", color = "black"),
+    axis.title    = element_text(size = 26, face = "bold", color = "black"),
+    panel.grid.minor  = element_blank(),
+    panel.spacing.x   = unit(3, "mm"),
+    strip.placement   = "outside",
+    strip.text.x      = element_text(size = 20, face = "bold", color = "black"),
+    strip.text.y.left = element_text(angle = 0, size = 20, face = "bold", color = "black"),
+    legend.title      = element_text(size = 22, face = "bold", color = "black"),
+    legend.text       = element_text(size = 18, face = "bold", color = "black"),
+    legend.key.size   = unit(9, "mm")
   )
 
-ggsave("GRN_SCENIC/TF_TLS_top10_by_targetcount_plot.pdf", p_final, width = 25, height = 12)
-cat("\nplot saved to GRN_SCENIC/TF_TLS_top10_by_targetcount_plot.pdf\n")
+ggsave("GRN_SCENIC/TLS_target.pdf", p_final, width = 35, height = 12)
+
 ```
+
 
 ## 16. Pairwise shared regulons heatmap
 
@@ -2258,6 +2461,7 @@ upset(
 
 dev.off()
 ```
+
 ## 18. TLS marker expression across diseases
 
 ```{r}
@@ -2501,9 +2705,9 @@ draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
 dev.off()
 ```
 
+
 ```{r}
-# same TLS marker analysis, with low-expression markers filtered out and
-# z-scored expression driving both dot size and the dominant cell type call
+##  With filtering
 library(Seurat)
 library(ComplexHeatmap)
 library(circlize)
@@ -2707,18 +2911,16 @@ cell_fun <- function(j, i, x, y, w, h, fill) {
   )
 }
 
+# poster sizing: bigger fonts throughout, legend built as one single
+# vertical bar below (Group / Celltypes / Relative expression stacked
+# in that order, all one column, no side-by-side wrapping)
 row_ha <- rowAnnotation(
   Group = marker_groups_final,
   col = list(Group = group_cols),
   annotation_width = unit(3, "mm"),
   show_annotation_name = FALSE,
-  annotation_legend_param = list(
-    Group = list(
-      title = "TLS genes",
-      title_gp = gpar(fontsize = 10, fontface = "bold"),
-      labels_gp = gpar(fontsize = 9)
-    )
-  )
+  show_legend = FALSE # legend for Group is built manually below so it can
+  # be stacked together with the other two into one bar
 )
 
 ht <- Heatmap(
@@ -2728,8 +2930,8 @@ ht <- Heatmap(
   rect_gp = gpar(type = "none"),
   cell_fun = cell_fun,
   show_heatmap_legend = FALSE,
-  row_names_gp = gpar(fontsize = 12, fontface = "bold"),
-  column_names_gp = gpar(fontsize = 15, fontface = "bold"),
+  row_names_gp = gpar(fontsize = 14, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 18, fontface = "bold"),
   column_names_rot = 90,
   border = TRUE,
   left_annotation = row_ha,
@@ -2742,16 +2944,29 @@ ht <- Heatmap(
   show_row_dend = FALSE,
   show_column_dend = TRUE,
   row_split = marker_groups_final,
-  row_title_gp = gpar(fontsize = 10, fontface = "bold"),
+  row_title_gp = gpar(fontsize = 13, fontface = "bold"),
   row_gap = unit(2, "mm")
+)
+lgd_group <- Legend(
+  labels = names(group_cols),
+  legend_gp = gpar(fill = group_cols, col = "grey30"),
+  title = "TLS genes",
+  title_gp = gpar(fontsize = 16, fontface = "bold"),
+  labels_gp = gpar(fontsize = 13),
+  grid_height = unit(5, "mm"),
+  grid_width = unit(5, "mm"),
+  ncol = 1
 )
 
 lgd_celltype <- Legend(
   labels = names(celltype_cols)[!(names(celltype_cols) %in% excluded_celltypes)],
-  legend_gp = gpar(fill = celltype_cols[!(names(celltype_cols) %in% excluded_celltypes)]),
+  legend_gp = gpar(fill = celltype_cols[!(names(celltype_cols) %in% excluded_celltypes)], col = "grey30"),
   title = "Celltypes",
-  title_gp = gpar(fontsize = 10, fontface = "bold"),
-  labels_gp = gpar(fontsize = 9)
+  title_gp = gpar(fontsize = 16, fontface = "bold"),
+  labels_gp = gpar(fontsize = 13),
+  grid_height = unit(5, "mm"),
+  grid_width = unit(5, "mm"),
+  ncol = 1
 )
 
 # size legend now in SD units, since size represents row-scaled expression
@@ -2764,16 +2979,49 @@ lgd_size <- Legend(
   title = "Relative expression\n(z-score across diseases)",
   type = "points",
   pch = 16,
-  size = unit(size_breaks_norm * 0.45 * 4, "mm"),
+  size = unit(size_breaks_norm * 0.45 * 9, "mm"),
   legend_gp = gpar(col = "grey40", fill = "grey70"),
-  title_gp = gpar(fontsize = 10, fontface = "bold"),
-  labels_gp = gpar(fontsize = 9)
+  title_gp = gpar(fontsize = 16, fontface = "bold"),
+  labels_gp = gpar(fontsize = 13),
+  ncol = 1
 )
 
-pdf("output/Fusion/TLS_plot_filtered.pdf", width = 10, height = 12)
-draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
+#legend
+lgd_filter <- Legend(
+  # final wording, agreed on with the full methods sentence: "Genes
+  # expressed in at least 10% of cells within at least one cell type in
+  # at least one disease dataset were retained for visualisation."
+  # ">=" kept as plain ASCII (not the unicode "≥" glyph) since base
+  # pdf() devices can drop/substitute that symbol depending on the font
+  labels = "Genes shown: >=10% of cells, in >=1 cell type/disease",
+  title = "Gene filter",
+  type = "points",
+  pch = NA,
+  legend_gp = gpar(col = NA, fill = NA),
+  title_gp = gpar(fontsize = 16, fontface = "bold"),
+  labels_gp = gpar(fontsize = 13),
+  ncol = 1
+)
+
+# pack all four into ONE legend object, stacked vertically top to bottom
+# (Group, then Celltypes, then Relative expression, then the gene filter
+# note) in a single column, with a visible gap between each block
+legend_list <- packLegend(
+  lgd_group, lgd_celltype, lgd_size, lgd_filter,
+  direction = "vertical",
+  gap = unit(10, "mm"),
+  max_height = unit(400, "mm")
+)
+
+pdf("output/Fusion/TLS.pdf", width = 12, height = 12)
+draw(ht, annotation_legend_list = list(legend_list), annotation_legend_side = "right")
 dev.off()
+
 ```
+
+
+
+
 
 ## 19. Save the final merged object
 

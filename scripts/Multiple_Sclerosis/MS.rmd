@@ -52,7 +52,7 @@ MS[["percent.mt"]] <- PercentageFeatureSet(MS, pattern = "^MT-")
 VlnPlot(MS, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, log = TRUE)
 
 # QC thresholds
-MS <- subset(MS, subset = nFeature_RNA > 300 & nFeature_RNA < 6000 & percent.mt < 15)
+MS <- subset(MS, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & percent.mt < 15)
 
 # check for remaining abnormal cells
 plot1 <- FeatureScatter(MS, feature1 = "nCount_RNA", feature2 = "percent.mt")

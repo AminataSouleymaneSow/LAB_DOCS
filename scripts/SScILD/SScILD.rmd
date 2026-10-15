@@ -901,6 +901,7 @@ saveRDS(SS.U, file = "data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
 
 # checkpoint: reload from here without rerunning the steps above
 SS.U <- readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
+
 ```
 
 ## 13. Export for gene regulatory network analysis (SCENIC)
@@ -1618,5 +1619,6 @@ write.csv(SS.L@meta.data,
 saveRDS(SS.L, file = "data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
 
 # checkpoint: reload from here without rerunning the steps above
-SS.L <- readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+SScILD.L <- readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
+
 ```

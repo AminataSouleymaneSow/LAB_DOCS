@@ -113,6 +113,7 @@ VlnPlot(IPF.U, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 
 
 # QC threshold, set from this sample's own distributions
 IPF.U <- subset(IPF.U, subset = nFeature_RNA > 200 & nFeature_RNA < 7000 & percent.mt < 10)
+
 ```
 
 ## 4. Normalization, scaling, and PCA
@@ -752,6 +753,7 @@ write.csv(IPF.U@meta.data, file = "data/process/SeuratObjects/IPF/Upper/IPF.U_me
 
 saveRDS(IPF.U, file = "data/process/SeuratObjects/IPF/Upper/IPF.U_process.rds")
 
+IPF.U=readRDS("data/process/SeuratObjects/IPF/Upper/IPF.U_process.rds")
 
 ```
 

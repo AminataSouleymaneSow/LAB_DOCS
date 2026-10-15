@@ -518,7 +518,9 @@ Obj@meta.data <- Obj@meta.data[, keep_cols]
 
 saveRDS(Obj, file = "data/process/SeuratObjects/Lymph_data/LN_process.rds")
 Obj <- readRDS("data/process/SeuratObjects/Lymph_data/LN_process.rds")
+
 ```
+
 
 ## 11. Cell-cell communication setup
 
