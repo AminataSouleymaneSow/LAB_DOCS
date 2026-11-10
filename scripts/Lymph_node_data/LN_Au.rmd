@@ -76,28 +76,22 @@ LN_Au <- RunUMAP(LN_Au, reduction = "harmony", dims = 1:30, reduction.name = "um
 
 ```{r}
 
-# harmonize the Lymph Node label and drop the factor's legend title
-LN_Au@meta.data$orig.ident <- gsub("Lymph Nodes", "LymphNodes", LN_Au@meta.data$orig.ident)
-LN_Au$orig.ident <- factor(LN_Au$orig.ident)
-names(attributes(LN_Au$orig.ident)$levels) <- NULL
+library(Seurat)
+library(ggplot2)
 
-Idents(LN_Au) <- "orig.ident"
+LN_Au$group <- ifelse(grepl("lymph", LN_Au$orig.ident, ignore.case = TRUE),
+                      "Lymph Node", "Autoimmune")
+LN_Au$group <- factor(LN_Au$group, levels = c("Autoimmune", "Lymph Node"))
 
-disease_colors <- c(
-  "MS"         = "darkolivegreen3",
-  "RA"         = "red3",
-  "SS"         = "orangered",
-  "IPF.U"      = "cyan4",
-  "IPF.L"      = "cyan",
-  "T1D"        = "darkred",
-  "SScILD.U"   = "gold",
-  "SScILD.L"   = "magenta",
-  "SjD"        = "darkblue",
-  "LymphNodes" = "green"
-)
+group_colors <- c("Autoimmune" = "#E8A33D", "Lymph Node" = "#2E8B57")
 
+P <- DimPlot(LN_Au, reduction = "umap", group.by = "group",
+             cols = group_colors, pt.size = 1.5, shuffle = TRUE,
+             raster = TRUE, raster.dpi = c(1200, 1200)) +
+  ggtitle(NULL) +
+  guides(colour = guide_legend(override.aes = list(size = 5)))
 
-ggsave(filename = "output/LN_Au/UMAP.pdf", plot = P, height = 8, width = 12)
+ggsave(filename = "output/Ln_au_UMAP.pdf", plot = P, height = 8, width = 10)
 
 ```
 
@@ -698,6 +692,45 @@ dir.create("CCC/LN_Au", recursive = TRUE, showWarnings = FALSE)
 ggsave("CCC/LN_Au/venn_Diagramme.pdf", plot = p,
        width = 9, height = 7, dpi = 300)
 ```
+
+
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+
+au_interactions <- unique(all_data$interaction[all_data$disease != "Lymph Node"])
+ln_interactions <- unique(all_data$interaction[all_data$disease == "Lymph Node"])
+shared <- intersect(ln_interactions, au_interactions)
+total_union <- length(union(ln_interactions, au_interactions))
+
+plot_df <- data.frame(
+  group    = rep(c("Lymph Node", "Autoimmune"), each = 2),
+  category = rep(c("Shared interactions", "Unique interactions"), times = 2),
+  n        = c(length(shared), length(setdiff(ln_interactions, shared)),
+               length(shared), length(setdiff(au_interactions, shared)))
+) %>%
+  dplyr::mutate(pct = round(100 * n / total_union, 1),
+                label = paste0(n, "\n(", pct, "%)"))
+
+p <- ggplot(plot_df, aes(x = group, y = n, fill = category)) +
+  geom_col(width = 0.6, colour = "white") +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5),
+            size = 5, fontface = "bold", colour = "black") +
+  scale_fill_manual(values = c("Shared interactions" = "#D6604D", "Unique interactions" = "grey80")) +
+  labs(x = NULL, y = "Number of interactions", fill = NULL) +
+  theme_classic(base_size = 16) +
+  theme(axis.text = element_text(face = "bold", colour = "black"),
+        axis.title = element_text(face = "bold"),
+        legend.text = element_text(face = "bold"))
+
+ggsave("output/LN_Au_interactions.pdf", plot = p, width = 7, height = 8)
+
+
+```
+
+
 
 ## 11. Top shared interactions plot
 
@@ -1495,6 +1528,47 @@ dev.off()
 ```
 
 
+```{r}
+
+#install.packages(c("magick", "pdftools"))
+library(magick)
+
+paths <- c(
+  MS       = "output/MS/MS_CellType.pdf",
+  RA       = "output/RA/RA_cellType.pdf",
+  SS       = "output/SS/SS_CellType.pdf",
+  T1D      = "output/T1D/T1D_cellType.pdf",
+  SjD      = "output/SjD/SjD_CellType.pdf",
+  IPF.U    = "output/IPF/Upper/IPFU_CellType.pdf",
+  IPF.L    = "output/IPF/Low/IPFL_cellType.pdf",
+  SScILD.U = "output/SScILD/Upper/SSU_cellType.pdf",
+  SScILD.L = "output/SScILD/Low/SSL_cellType.pdf",
+  LN       = "output/Lymph_node/CellType.pdf"
+)
+make_panel <- function(path, title) {
+  image_read(path, density = 400) |>
+    image_flatten() |>
+    image_background("white") |>
+    image_trim() |>
+    image_resize("1400x1400") |>
+    image_extent("1440x1440", gravity = "center", color = "white") |>
+    image_border("white", "0x110") |>
+    image_annotate(title, size = 80, weight = 700, gravity = "north",
+                   location = "+0+20", color = "black") |>
+    image_border("white", "30x30")
+}
+
+panels <- mapply(make_panel, paths, names(paths), SIMPLIFY = FALSE)
+
+row1 <- image_append(do.call(c, panels[1:5]))
+row2 <- image_append(do.call(c, panels[6:10]))
+grid <- image_append(c(row1, row2), stack = TRUE) |>
+  image_background("white")
+
+image_write(grid, "output/UMAP_all_slide.png", format = "png", density = 300)
+
+
+```
 
 
 ## 14. Save final Seurat object

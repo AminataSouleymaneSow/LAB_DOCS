@@ -40,7 +40,7 @@ IPF.L <- readRDS("data/process/SeuratObjects/IPF/Lower/IPF.L_Final.rds")
 T1D <- readRDS("data/process/SeuratObjects/T1D/T1D_process.rds")
 SScILD.U <- readRDS("data/process/SeuratObjects/SScILD/Upper/SS.U_process.rds")
 SScILD.L <- readRDS("data/process/SeuratObjects/SScILD/Low/SS.L_process.rds")
-SjD <- readRDS("data/process/SeuratObjects/SjD/SjD.rds")
+SjD <- readRDS("data/process/SeuratObjects/SjD/SjD(+).rds")
 
 ```
 
@@ -291,256 +291,9 @@ cat("Saved: output/Fusion/Major_Celltype_all.pdf\n")
 
 ## 8. Cell types shared across diseases
 
-```{r}
-library(dplyr)
-library(tidyr)
-library(pheatmap)
-library(grid)
-
-# exclude the same cell types used throughout the project
-excluded_celltypes <- c(
-  "Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
-  "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
-  "Plasma Cells"
-)
-meta_filtered <- Fu@meta.data %>%
-  filter(!General %in% excluded_celltypes)
-cat("Cell types remaining after exclusion:\n")
-print(sort(unique(meta_filtered$General)))
-
-# count how many diseases share each cell type
-tab <- table(meta_filtered$General, meta_filtered$orig.ident)
-n_diseases <- rowSums(tab > 0)
-celltype_disease_table <- data.frame(
-  General = rownames(tab),
-  n_diseases = n_diseases,
-  diseases = apply(tab > 0, 1, function(x) {
-    paste(colnames(tab)[x], collapse = ", ")
-  }),
-  row.names = NULL
-)
-
-# keep only shared cell types (present in >=2 diseases)
-shared_celltypes <- celltype_disease_table$General[
-  celltype_disease_table$n_diseases >= 2
-]
-shared_celltype_table <- celltype_disease_table[
-  celltype_disease_table$n_diseases >= 2,
-]
-write.csv(
-  shared_celltype_table,
-  file = "output/Fusion/shared_celltype.csv",
-  row.names = FALSE
-)
-cat("Shared cell types (>=2 diseases):\n")
-print(shared_celltypes)
-
-count_tbl_shared <- meta_filtered %>%
-  filter(General %in% shared_celltypes) %>%
-  dplyr::count(General, orig.ident) %>%
-  filter(n >= 2)
-
-count_mat_shared <- count_tbl_shared %>%
-  pivot_wider(
-    names_from = orig.ident,
-    values_from = n,
-    values_fill = 0
-  )
-count_mat_shared <- as.data.frame(count_mat_shared)
-rownames(count_mat_shared) <- count_mat_shared$General
-count_mat_shared$General <- NULL
-count_mat_shared <- as.matrix(count_mat_shared)
-
-# convert counts to a PERCENTAGE of cells per disease (denominator = the
-# full filtered cell count for that disease, not just the shared subset)
-total_per_disease <- meta_filtered %>%
-  dplyr::count(orig.ident) %>%
-  tibble::deframe()
-total_per_disease <- total_per_disease[colnames(count_mat_shared)]
-percent_mat_shared <- sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100
-percent_mat_shared <- round(percent_mat_shared, 1)
-
-# pheatmap has no built-in argument for a legend title, so the heatmap is
-# drawn once on a scratch device to get its gtable, then drawn again on
-# the real device with the title text added on top
-out_width <- 10
-out_height <- 12
-
-scratch_file <- tempfile(fileext = ".pdf")
-pdf(scratch_file, width = out_width, height = out_height)
-p <- pheatmap::pheatmap(
-  percent_mat_shared,
-  cluster_rows = FALSE,
-  cluster_cols = TRUE,
-  display_numbers = percent_mat_shared,
-  number_color = "white",
-  fontsize_row = 12,
-  fontsize_col = 12,
-  fontsize_number = 12,
-  color = colorRampPalette(c("grey", "red", "red3"))(100),
-  border_color = NA,
-  silent = TRUE
-)
-dev.off()
-unlink(scratch_file)
-
-gt <- p$gtable
-
-pdf("output/Fusion/HEATMAP_shared_celltype.pdf", width = out_width, height = out_height)
-grid.newpage() # must start the page before any convertWidth/Height call below
-
-w <- convertWidth(gt$widths, "npc", valueOnly = TRUE)
-h <- convertHeight(gt$heights, "npc", valueOnly = TRUE)
-leg_row <- gt$layout[gt$layout$name == "legend", ]
-leg_x1 <- sum(w[seq_len(leg_row$r)])
-leg_y1 <- 1 - sum(h[seq_len(leg_row$t - 1)])
-
-grid.draw(gt)
-grid.text(
-  "% of cells",
-  x = unit(leg_x1, "npc"),
-  y = unit(leg_y1 + 0.015, "npc"),
-  just = c("right", "bottom"),
-  gp = gpar(fontsize = 10, fontface = "bold")
-)
-dev.off()
-
-
-
-```
-
 
 ```{r}
 
-library(dplyr)
-library(tidyr)
-library(ComplexHeatmap)
-library(circlize)
-library(grid)
-
-# exclude the same cell types used throughout the project
-excluded_celltypes <- c(
-  "Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
-  "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
-  "Plasma Cells"
-)
-meta_filtered <- Fu@meta.data %>%
-  filter(!General %in% excluded_celltypes)
-cat("Cell types remaining after exclusion:\n")
-print(sort(unique(meta_filtered$General)))
-
-# count how many diseases share each cell type
-tab <- table(meta_filtered$General, meta_filtered$orig.ident)
-n_diseases <- rowSums(tab > 0)
-celltype_disease_table <- data.frame(
-  General = rownames(tab),
-  n_diseases = n_diseases,
-  diseases = apply(tab > 0, 1, function(x) {
-    paste(colnames(tab)[x], collapse = ", ")
-  }),
-  row.names = NULL
-)
-
-# keep only shared cell types (present in >=2 diseases)
-shared_celltypes <- celltype_disease_table$General[
-  celltype_disease_table$n_diseases >= 2
-]
-shared_celltype_table <- celltype_disease_table[
-  celltype_disease_table$n_diseases >= 2,
-]
-write.csv(
-  shared_celltype_table,
-  file = "output/Fusion/shared_celltype.csv",
-  row.names = FALSE
-)
-cat("Shared cell types (>=2 diseases):\n")
-print(shared_celltypes)
-
-count_tbl_shared <- meta_filtered %>%
-  filter(General %in% shared_celltypes) %>%
-  dplyr::count(General, orig.ident) %>%
-  filter(n >= 2)
-
-count_mat_shared <- count_tbl_shared %>%
-  pivot_wider(
-    names_from = orig.ident,
-    values_from = n,
-    values_fill = 0
-  )
-count_mat_shared <- as.data.frame(count_mat_shared)
-rownames(count_mat_shared) <- count_mat_shared$General
-count_mat_shared$General <- NULL
-count_mat_shared <- as.matrix(count_mat_shared)
-
-# convert counts to a PERCENTAGE of cells per disease (denominator = the
-# full filtered cell count for that disease, not just the shared subset)
-total_per_disease <- meta_filtered %>%
-  dplyr::count(orig.ident) %>%
-  tibble::deframe()
-total_per_disease <- total_per_disease[colnames(count_mat_shared)]
-percent_mat_shared <- sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100
-percent_mat_shared <- round(percent_mat_shared, 1)
-
-mat <- percent_mat_shared
-n_rows <- nrow(mat)
-n_cols <- ncol(mat)
-
-# NOTE: pheatmap() is intentionally not used here. In your R session,
-
-color_fun <- colorRamp2(
-  c(0, max(mat) / 2, max(mat)),
-  c("grey", "red", "red3")
-)
-
-ht <- Heatmap(
-  mat,
-  name = "pct",
-  col = color_fun,
-  cluster_rows = FALSE,
-  cluster_columns = TRUE,
-  # cell numbers drawn directly - bold + black
-  cell_fun = function(j, i, x, y, w, h, fill) {
-    grid.text(
-      sprintf("%.1f", mat[i, j]),
-      x, y,
-      gp = gpar(fontsize = 11, fontface = "bold", col = "black")
-    )
-  },
-  row_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
-  column_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
-  column_names_rot = 45,
-  rect_gp = gpar(col = "white", lwd = 1),
-  border = TRUE,
-  # sized directly from the data (rows/cols x a fixed cell size) instead
-  # of guessing a canvas size - this is what actually removes the empty
-  # margin, rather than cropping it away after the fact
-  width = unit(n_cols * 14, "mm"),
-  height = unit(n_rows * 9, "mm"),
-  heatmap_legend_param = list(
-    title = "% of cells",
-    title_gp = gpar(fontsize = 11, fontface = "bold", col = "black"),
-    labels_gp = gpar(fontsize = 10, fontface = "bold", col = "black")
-  )
-)
-
-out_path <- "output/Fusion/HEATMAP_shared_celltype.pdf"
-dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
-
-pdf(
-  out_path,
-  width = 3 + n_cols * 0.6,
-  height = 2 + n_rows * 0.4,
-  useDingbats = FALSE
-)
-draw(ht, padding = unit(c(2, 2, 2, 2), "mm"), legend_gap = unit(1, "mm"))
-dev.off()
-
-
-
-```
-
-
-```{r}
 library(dplyr)
 library(tidyr)
 library(pheatmap)
@@ -686,6 +439,111 @@ dev.off()
 
 
 
+```{r}
+
+#add another col with the count 
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+# exclude the same cell types used throughout the project
+excluded_celltypes <- c(
+  "Glial Cells", "Neurons", "Immune Cells", "Melanocytes",
+  "Keratinocytes", "Endocrine Cells", "Smooth Muscle Cells",
+  "Plasma Cells"
+)
+meta_filtered <- Fu@meta.data %>%
+  filter(!General %in% excluded_celltypes)
+
+# count how many diseases share each cell type
+tab <- table(meta_filtered$General, meta_filtered$orig.ident)
+celltype_disease_table <- data.frame(
+  General    = rownames(tab),
+  n_diseases = rowSums(tab > 0),
+  diseases   = apply(tab > 0, 1, function(x) paste(colnames(tab)[x], collapse = ", ")),
+  row.names  = NULL
+)
+
+# keep only shared cell types (present in >=2 diseases)
+shared_celltypes <- celltype_disease_table$General[celltype_disease_table$n_diseases >= 2]
+write.csv(
+  celltype_disease_table[celltype_disease_table$n_diseases >= 2, ],
+  file = "output/Fusion/shared_celltype.csv",
+  row.names = FALSE
+)
+
+count_tbl_shared <- meta_filtered %>%
+  filter(General %in% shared_celltypes) %>%
+  dplyr::count(General, orig.ident) %>%
+  filter(n >= 2)
+
+count_mat_shared <- count_tbl_shared %>%
+  pivot_wider(names_from = orig.ident, values_from = n, values_fill = 0) %>%
+  as.data.frame()
+rownames(count_mat_shared) <- count_mat_shared$General
+count_mat_shared$General <- NULL
+count_mat_shared <- as.matrix(count_mat_shared)
+
+# percentage of cells per disease
+total_per_disease <- meta_filtered %>%
+  dplyr::count(orig.ident) %>%
+  tibble::deframe()
+total_per_disease <- total_per_disease[colnames(count_mat_shared)]
+percent_mat_shared <- round(sweep(count_mat_shared, 2, total_per_disease, FUN = "/") * 100, 1)
+
+# number of datasets in which each cell type is present
+n_datasets <- 9
+n_present <- rowSums(count_mat_shared > 0)
+col_presence <- colorRamp2(c(1, n_datasets), c("#DEEBF7", "#08306B"))
+
+presence_anno <- rowAnnotation(
+  presence = anno_simple(
+    n_present,
+    col = col_presence,
+    pch = as.character(n_present),
+    pt_gp = gpar(fontsize = 12, fontface = "bold",
+                 col = ifelse(n_present >= 6, "white", "black")),
+    width = unit(10, "mm")
+  ),
+  show_annotation_name = FALSE,
+  show_legend = FALSE
+)
+
+col_percent <- colorRamp2(
+  seq(0, max(percent_mat_shared), length.out = 3),
+  c("grey", "red", "red3")
+)
+
+ht <- Heatmap(
+  percent_mat_shared,
+  name = "% of cells",
+  col = col_percent,
+  cluster_rows = FALSE,
+  cluster_columns = TRUE,
+  left_annotation = presence_anno,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
+  column_names_gp = gpar(fontsize = 12, fontface = "bold", col = "black"),
+  rect_gp = gpar(col = NA),
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    grid.text(percent_mat_shared[i, j], x, y,
+              gp = gpar(fontsize = 12, fontface = "bold", col = "black"))
+  },
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),
+    labels_gp = gpar(fontsize = 10, fontface = "bold", col = "black")
+  )
+)
+
+pdf("output/HEATMAP.pdf", width = 11, height = 12)
+draw(ht)
+dev.off()
+
+
+```
+
 
 ## 9. UMAP colored by general cell type
 
@@ -820,7 +678,9 @@ pheatmap(
 )
 ```
 
+
 ```{r}
+
 
 library(dplyr)
 library(ggplot2)
@@ -888,6 +748,71 @@ p <- ggplot(counts_df, aes(n, Major_Celltype, fill = celltype)) +
 ggsave("output/Fusion/celltype_counts.pdf", p, width = 9, height = 6.5, dpi = 300)
 
 ```
+
+
+```{r}
+
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(cowplot)
+
+cols <- c(
+  "Oligodendrocytes" = "aquamarine3", "Astrocytes" = "#17BECF",
+  "Microglia" = "cadetblue", "OPC" = "grey", "Neurons" = "#4B2EFF",
+  "Acinar Cells" = "coral1", "Alpha Cells" = "mediumorchid1",
+  "Ductal Cells" = "mistyrose3", "Delta Cells" = "#762A83",
+  "Basal Keratinocyte" = "#9467bd", "Suprabasal Keratinocyte" = "brown2",
+  "Smooth Muscle Cells" = "lightpink2", "Schwann Cells" = "plum3",
+  "Melanocytes" = "orangered4", "Secretory Cells" = "salmon3",
+  "Basal Cells" = "indianred3", "Ciliated Cells" = "saddlebrown",
+  "Alveolar Cells" = "aquamarine", "Goblet Cells" = "cornflowerblue",
+  "Endothelial Cells" = "#E31A1C", "Lymphatic Endothelial" = "mediumorchid1",
+  "Arterial Endothelial" = "cadetblue3", "Venous Endothelial" = "chocolate1",
+  "Capillary Endothelial" = "#7f7f7f", "Peribronchial Endothelial" = "darkgoldenrod2",
+  "Fibroblasts" = "cyan", "Mural Cells" = "#1F78B4",
+  "CD4" = "olivedrab2", "CD8" = "tomato", "B Cells" = "gold",
+  "NK Cells" = "magenta", "Mast Cells" = "#FDBF6F",
+  "Macrophages" = "orangered", "Mono/Mac" = "orangered",
+  "Monocytes" = "#2ca02c", "Dendritic Cells" = "yellow3",
+  "Myeloid Cells" = "#c5b0d5", "Plasmacytoid Dendritic" = "peru",
+  "Plasma Cells" = "darkorchid4", "Proliferating Cells" = "#B15928"
+)
+
+objs <- list(MS = MS, RA = RA, SS = SS, T1D = T1D, SjD = SjD,
+             IPF.U = IPF.U, IPF.L = IPF.L, SScILD.U = SScILD.U, SScILD.L = SScILD.L)
+
+present <- unique(unlist(lapply(objs, function(o) as.character(o$Major_Celltype))))
+setdiff(present, names(cols))
+cols <- cols[names(cols) %in% present]
+
+pick_red <- function(o) {
+  r <- grep("umap|uharmony", Reductions(o), ignore.case = TRUE, value = TRUE)
+  h <- grep("harmony", r, ignore.case = TRUE, value = TRUE)
+  if (length(h)) h[1] else r[1]
+}
+
+title_theme <- theme(plot.title = element_text(hjust = 0.5, size = 22))
+
+plots <- lapply(names(objs), function(n) {
+  DimPlot(objs[[n]], reduction = pick_red(objs[[n]]), group.by = "Major_Celltype",
+          cols = cols, pt.size = 0.1) +
+    ggtitle(n) + NoAxes() + NoLegend() + title_theme
+})
+
+legend_df <- data.frame(x = 1, y = 1, ct = factor(names(cols), levels = names(cols)))
+legend <- get_legend(
+  ggplot(legend_df, aes(x, y, colour = ct)) + geom_point() +
+    scale_color_manual(values = cols, name = NULL) +
+    guides(colour = guide_legend(ncol = 2, override.aes = list(size = 3.5))) +
+    theme(legend.text = element_text(size = 10.5))
+)
+
+fig <- wrap_plots(c(plots, list(wrap_elements(full = legend))), ncol = 5)
+ggsave("output/umaps_all.pdf", fig, width = 20, height = 10)
+
+```
+
 
 ## 11. Shared pathways between diseases
 
@@ -984,7 +909,6 @@ cat("\nBreakdown by source:\n")
 print(table(shared$source))
 
 ```
-
 
 
 
@@ -1117,7 +1041,7 @@ suppressWarnings(
     point.size = 6,
     line.size = 1.5,
     mainbar.y.label = "Number of Shared Pathways",
-    sets.x.label = "Pathways per Disease",
+    sets.x.label = "Pathways per Dataset",
     main.bar.color = "#2166AC",
     sets.bar.color = "#D6604D",
     matrix.color = "#2166AC",
@@ -1580,7 +1504,7 @@ suppressWarnings(
     point.size   = 6,
     line.size    = 1.5,
     mainbar.y.label = "Number of Shared Interactions",
-    sets.x.label    = "Interactions per Disease",
+    sets.x.label    = "Interactions per Dataset",
     main.bar.color  = "#2166AC",
     sets.bar.color  = "#D6604D",
     matrix.color    = "#2166AC",
@@ -1593,14 +1517,6 @@ bold_all_text_on_device()
 dev.off()
  
 ```
-
-
-
-
-
-
-
-
 
 
 ## 14. GRN - shared and unique regulons between diseases
@@ -2138,10 +2054,12 @@ print(head(tf_tls_full_table, 20))
 
 write.csv(tf_tls_full_table, "GRN_SCENIC/TF_TLS_targets_by_category_celltype.csv", row.names = FALSE)
 
+
 ```
 
 
 ```{r}
+
 # heatmap: number of TLS targets per shared TF, per disease
 library(dplyr)
 library(tidyr)
@@ -2210,6 +2128,7 @@ dev.off()
 
 
 ```{r}
+
 library(dplyr)
 library(tidyr)
 library(purrr)
@@ -2319,6 +2238,7 @@ plot_data$TF      <- factor(plot_data$TF, levels = top10_tfs)
 plot_data$disease <- factor(plot_data$disease, levels = disease_levels)
 plot_data$RSS_in_disease <- pmin(pmax(plot_data$RSS_in_disease, 0), 1)
 
+# same hex values as every other plot on the poster - not touched
 celltype_cols <- c(
   "B Cells"             = "gold",
   "CD4"                 = "olivedrab2",
@@ -2333,28 +2253,43 @@ celltype_cols <- c(
   "Epithelial Cells"    = "mediumpurple2"
 )
 
+# only legend swatches for cell types that actually occur in this figure
+present_celltypes <- intersect(
+  names(celltype_cols),
+  as.character(unique(plot_data$CellType_in_disease[!is.na(plot_data$CellType_in_disease)]))
+)
+
 dummy_celltype <- data.frame(
   TF                  = plot_data$TF[1],
   target              = plot_data$target[1],
   category            = plot_data$category[1],
   disease             = plot_data$disease[1],
-  CellType_in_disease = factor(names(celltype_cols), levels = names(celltype_cols))
+  CellType_in_disease = factor(present_celltypes, levels = present_celltypes)
 )
 
-p_final <- ggplot(plot_data, aes(x = TF, y = target)) +
+# TRANSPOSED LAYOUT, per your request:
+#   x axis (bottom)   = Target Gene
+#   y axis (left)     = Transcription Factor
+#   facet columns (top)   = category (marker group)
+#   facet rows (right, vertical text) = disease
+# facet_grid's defaults already put the row-facet strip (disease) on the
+# RIGHT with vertical (rotated) text and the column-facet strip (category)
+# on TOP with horizontal text - no "switch" needed, this is just
+# facet_grid(disease ~ category) instead of facet_grid(category ~ disease)
+p_final <- ggplot(plot_data, aes(x = target, y = TF)) +
   geom_point(aes(size = RSS_in_disease, color = CellType_in_disease),
     show.legend = c(size = TRUE, colour = FALSE)
   ) +
   geom_point(
     data = dummy_celltype,
-    aes(x = TF, y = target, color = CellType_in_disease),
+    aes(x = target, y = TF, color = CellType_in_disease),
     size = 5, alpha = 0, inherit.aes = FALSE
   ) +
-  facet_grid(category ~ disease, scales = "free_y", space = "free_y", switch = "y") +
-  scale_color_manual(values = celltype_cols, limits = names(celltype_cols), drop = FALSE) +
+  facet_grid(disease ~ category, scales = "free", space = "free") +
+  scale_color_manual(values = celltype_cols, limits = present_celltypes, drop = TRUE) +
   scale_size_continuous(
     name   = "RSS",
-    range  = c(2, 9),
+    range  = c(3.5, 9),
     breaks = c(0.2, 0.4, 0.6, 0.8, 1.0),
     limits = c(0, 1)
   ) +
@@ -2362,23 +2297,26 @@ p_final <- ggplot(plot_data, aes(x = TF, y = target)) +
     size  = guide_legend(order = 1),
     color = guide_legend(order = 2, override.aes = list(alpha = 1, size = 6))
   ) +
-  labs(x = "Transcription Factor", y = "Target Gene", color = "Cell type") +
+  labs(x = "Target Gene", y = "Transcription Factor", color = "Cell type") +
   theme_bw(base_size = 22) +
   theme(
     axis.text.x   = element_text(angle = 45, hjust = 1, vjust = 1, size = 15, face = "bold", color = "black"),
-    axis.text.y   = element_text(size = 20, face = "bold", color = "black"),
+    axis.text.y   = element_text(size = 18, face = "bold", color = "black"),
     axis.title    = element_text(size = 26, face = "bold", color = "black"),
+    panel.grid.major  = element_line(color = "grey88", linewidth = 0.3),
     panel.grid.minor  = element_blank(),
+    panel.border      = element_rect(color = "grey65", fill = NA, linewidth = 0.4),
     panel.spacing.x   = unit(3, "mm"),
-    strip.placement   = "outside",
-    strip.text.x      = element_text(size = 20, face = "bold", color = "black"),
-    strip.text.y.left = element_text(angle = 0, size = 20, face = "bold", color = "black"),
+    panel.spacing.y   = unit(2, "mm"),
+    strip.background  = element_rect(fill = "grey90", color = "grey40", linewidth = 0.3),
+    strip.text.x      = element_text(size = 18, face = "bold", color = "black"),
+    strip.text.y      = element_text(angle = -90, size = 18, face = "bold", color = "black"),
     legend.title      = element_text(size = 22, face = "bold", color = "black"),
     legend.text       = element_text(size = 18, face = "bold", color = "black"),
     legend.key.size   = unit(9, "mm")
   )
 
-ggsave("GRN_SCENIC/TLS_target.pdf", p_final, width = 35, height = 12)
+ggsave("GRN_SCENIC/TLS_target.pdf", p_final, width = 20, height =22, limitsize = FALSE)
 
 ```
 
@@ -2703,6 +2641,7 @@ lgd_size <- Legend(
 pdf("output/Fusion/TLS_plot_nofilter.pdf", width = 10, height = 12)
 draw(ht, annotation_legend_list = list(lgd_celltype, lgd_size))
 dev.off()
+
 ```
 
 
@@ -3018,8 +2957,6 @@ draw(ht, annotation_legend_list = list(legend_list), annotation_legend_side = "r
 dev.off()
 
 ```
-
-
 
 
 

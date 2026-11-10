@@ -206,6 +206,7 @@ for (i in seq_along(clusters)) {
 }
 ```
 
+
 ```{r}
 # curated marker genes for lymph node stromal, endothelial and immune cell types
 genes <- c(
@@ -271,10 +272,12 @@ genes <- c(
 )
 ```
 
+
 ```{r}
 # use the marker genes to check expression on the UMAP
 FeaturePlot(Obj, features = genes, combine = FALSE, order = TRUE, reduction = "umap.harmony")
 ```
+
 
 ```{r}
 p <- DotPlot(
@@ -353,6 +356,7 @@ p <- p + theme(
 
 ggsave(filename = "output/Lymph_node/LN_cluster_name.pdf", plot = p, width = 15, height = 10)
 ```
+
 
 ```{r}
 celltype_cols <- c(
@@ -636,3 +640,13 @@ write.csv(liana_filt, file = "CCC/Lymph_node/liana_filt.csv", row.names = FALSE)
 ```{r}
 saveRDS(sce, file = "data/process/SeuratObjects/Lymph_data/sce_processed.rds")
 ```
+
+
+
+
+
+
+
+
+
+
